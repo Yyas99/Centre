@@ -23,6 +23,7 @@ typedef void (^CAction)(void);
 @property (nonatomic, copy) NSString *altHint;
 @property (nonatomic, copy) NSString *detail;    // right-hand text that replaces kind (e.g. "2h ago")
 @property (nonatomic, copy) NSString *key;       // usage key, so the item can show up under Recent Commands
+@property (nonatomic, copy) NSString *confirm;   // set for irreversible commands: first ↩ arms, second ↩ runs
 @end
 @implementation CItem @end
 
@@ -113,6 +114,8 @@ static NSString *genPIN(NSUInteger len) {
     for (NSUInteger i = 0; i < len; i++) [p appendFormat:@"%u", arc4random_uniform(10)];
     return p;
 }
+static void showHUD(NSString *text, NSString *symbol);
+
 // Copies a secret: marked concealed so clipboard managers (and Centre's own history) skip it, and cleared after 90 s.
 static void copySecret(NSString *s) {
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
@@ -121,6 +124,7 @@ static void copySecret(NSString *s) {
     [pb setString:@"" forType:@"org.nspasteboard.ConcealedType"];
     [pb setString:@"" forType:@"org.nspasteboard.TransientType"];
     NSInteger cc = pb.changeCount;
+    showHUD(@"Password copied · clears in 90 s", @"key.fill");
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(90 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         if ([NSPasteboard generalPasteboard].changeCount == cc) [[NSPasteboard generalPasteboard] clearContents];
     });
@@ -264,6 +268,59 @@ static NSImage *tileImage(NSString *symbol, NSString *kind) {
     }];
     cache[key] = img;
     return img;
+}
+
+#pragma mark - HUD
+
+// A small capsule that confirms an action the panel can't show because it has already closed ("Copied 31.2").
+static NSPanel *prepareHUD(NSString *text, NSString *symbol) {
+    static NSPanel *hud; static NSTextField *label; static NSImageView *icon;
+    const CGFloat H = 40;
+    if (!hud) {
+        hud = [[NSPanel alloc] initWithContentRect:NSMakeRect(0, 0, 200, H) styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
+                                           backing:NSBackingStoreBuffered defer:NO];
+        hud.level = NSStatusWindowLevel + 1; hud.opaque = NO; hud.backgroundColor = [NSColor clearColor]; hud.hasShadow = YES;
+        hud.ignoresMouseEvents = YES; hud.releasedWhenClosed = NO;
+        hud.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary;
+        NSVisualEffectView *fx = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, 0, 200, H)];
+        fx.material = NSVisualEffectMaterialHUDWindow; fx.blendingMode = NSVisualEffectBlendingModeBehindWindow; fx.state = NSVisualEffectStateActive;
+        CGFloat R = H / 2;
+        NSImage *mask = [NSImage imageWithSize:NSMakeSize(R * 2 + 2, R * 2 + 2) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+            [[NSColor blackColor] set]; [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:R yRadius:R] fill]; return YES; }];
+        mask.capInsets = NSEdgeInsetsMake(R, R, R, R); mask.resizingMode = NSImageResizingModeStretch;
+        fx.maskImage = mask; fx.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        icon = [NSImageView new]; icon.imageScaling = NSImageScaleProportionallyDown;
+        label = [NSTextField labelWithString:@""]; label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
+        [fx addSubview:icon]; [fx addSubview:label];
+        hud.contentView = fx;
+    }
+    NSImage *g = [[NSImage imageWithSystemSymbolName:symbol ?: @"checkmark.circle.fill" accessibilityDescription:nil]
+                  imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:14 weight:NSFontWeightSemibold]];
+    icon.image = g; icon.contentTintColor = cAccent();
+    label.stringValue = text ?: @"";
+    [label sizeToFit];
+    CGFloat tw = ceil(NSWidth(label.frame)) + 4, W = 16 + 18 + 8 + tw + 18;   // +4: label cells add inset padding
+    icon.frame = NSMakeRect(16, (H - 18) / 2, 18, 18);
+    label.frame = NSMakeRect(16 + 18 + 8, floor((H - label.intrinsicContentSize.height) / 2), tw, label.intrinsicContentSize.height);
+    NSPoint mouse = [NSEvent mouseLocation]; NSScreen *scr = NSScreen.mainScreen ?: NSScreen.screens.firstObject;
+    for (NSScreen *sc in NSScreen.screens) if (NSMouseInRect(mouse, sc.frame, NO)) scr = sc;
+    NSRect v = scr.visibleFrame;
+    [hud setFrame:NSMakeRect(floor(NSMidX(v) - W / 2), NSMaxY(v) - floor(v.size.height * 0.20) - H, W, H) display:NO];
+    return hud;
+}
+static void showHUD(NSString *text, NSString *symbol) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        static NSInteger generation;
+        NSPanel *hud = prepareHUD(text, symbol);
+        NSInteger mine = ++generation;
+        hud.alphaValue = 0; [hud orderFrontRegardless];
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *c) { c.duration = 0.12; hud.animator.alphaValue = 1; } completionHandler:nil];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (mine != generation) return;                       // a newer message took over
+            [NSAnimationContext runAnimationGroup:^(NSAnimationContext *c) { c.duration = 0.25; hud.animator.alphaValue = 0; }
+                                completionHandler:^{ if (mine == generation) [hud orderOut:nil]; }];
+        });
+    });
 }
 
 #pragma mark - Hotkey helpers
@@ -941,6 +998,9 @@ static const CGFloat kMediaH = 92;
 @property (nonatomic, strong) id recentObserver;
 @property (nonatomic, copy) NSString *modeLabel;   // active prefix mode, shown as a chip in the search row
 @property (nonatomic) BOOL cmdHeld;                // ⌘ down: rows show their ⌘1…⌘9 shortcuts
+@property (nonatomic, strong) CItem *armedItem;    // irreversible command waiting for a second ↩
+@property (nonatomic, copy) NSString *armedSubtitle;
+@property (nonatomic, strong) NSDate *armedAt;
 @property (nonatomic, strong) NSStatusItem *status;
 @property (nonatomic, strong) NSArray<CItem *> *items;
 @property (nonatomic) NSInteger selected;
@@ -1079,6 +1139,8 @@ static NSString *defaultBrowserName(void) {
         void (^addApp)(NSString *) = ^(NSString *path) {
             NSString *name = [[fm displayNameAtPath:path] stringByDeletingPathExtension];
             if (!name.length || [seen containsObject:path]) return;
+            BOOL isDir = NO;   // skip broken symlinks and Finder alias files that only look like apps
+            if (![fm fileExistsAtPath:path isDirectory:&isDir] || !isDir) return;
             [seen addObject:path];
             CItem *i = [CItem new]; i.title = name; i.path = path; i.kind = @"Application";
             [out addObject:i];
@@ -1182,7 +1244,7 @@ static NSString *defaultBrowserName(void) {
     [a addObject:mk(@"Skip to Next Track", np, @"Media", @"forward.end.fill", ^{ [ws mediaCommand:4]; })];
     [a addObject:mk(@"Back to Previous Track", np, @"Media", @"backward.end.fill", ^{ [ws mediaCommand:5]; })];
     [a addObject:mk(@"Play Recent", @"Resume your recently played music on YouTube Music", @"Media", @"clock.arrow.circlepath", ^{ [ws ytmPlayRecent]; })];
-    [a addObject:mk(@"Empty Clipboard", nil, @"System", @"doc.on.clipboard", ^{ [[NSPasteboard generalPasteboard] clearContents]; [ws.clips removeAllObjects]; })];
+    [a addObject:mk(@"Empty Clipboard", nil, @"System", @"doc.on.clipboard", ^{ [[NSPasteboard generalPasteboard] clearContents]; [ws.clips removeAllObjects]; showHUD(@"Clipboard emptied", @"checkmark.circle.fill"); })];
     [a addObject:mk(@"Generate Password", @"Copies a strong 20-character password  \u00B7  type  pw 32  for more options", @"Password", @"key.fill", ^{ copySecret(genPassword(20, YES)); })];
     // Window management
     NSDictionary *wins = @{ @"Window: Left Half": @"left", @"Window: Right Half": @"right", @"Window: Top Half": @"top",
@@ -1201,6 +1263,10 @@ static NSString *defaultBrowserName(void) {
     })];
     [a addObject:mk(@"Centre: Quit", nil, @"Centre", @"xmark", ^{ [NSApp terminate:nil]; })];
     for (CItem *c in a) c.key = [@"cmd:" stringByAppendingString:c.title];
+    NSDictionary *confirm = @{ @"Restart": @"Press ↩ again to restart", @"Shut Down": @"Press ↩ again to shut down",
+                               @"Log Out": @"Press ↩ again to log out", @"Empty Trash": @"Press ↩ again — this can't be undone",
+                               @"Quit All Apps": @"Press ↩ again to quit every app" };
+    for (CItem *c in a) c.confirm = confirm[c.title];
     return a;
 }
 
@@ -1264,7 +1330,7 @@ static NSString *defaultBrowserName(void) {
     f.maximumFractionDigits = 8; f.usesGroupingSeparator = YES;
     NSString *txt = [f stringFromNumber:@(result)] ?: [NSString stringWithFormat:@"%g", result];
     NSString *plain = [NSString stringWithFormat:@"%.10g", result];
-    CItem *i = mk([@"= " stringByAppendingString:txt], q, @"Calculator", @"function", ^{ copyText(plain); });
+    CItem *i = mk([@"= " stringByAppendingString:txt], q, @"Calculator", @"function", ^{ copyText(plain); showHUD([@"Copied " stringByAppendingString:plain], @"checkmark.circle.fill"); });
     i.altAction = i.action; i.score = 1000;
     return i;
 }
@@ -1331,9 +1397,9 @@ static NSString *defaultBrowserName(void) {
             if (trusted && ws.previousApp) {
                 [ws.previousApp activateWithOptions:NSApplicationActivateIgnoringOtherApps];
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ simulatePaste(); });
-            }
+            } else showHUD(@"Copied · paste with ⌘V", @"doc.on.clipboard.fill");
         });
-        i.altAction = ^{ copyText(c); }; i.altHint = @"⌘↩ Copy";
+        i.altAction = ^{ copyText(c); showHUD(@"Copied", @"doc.on.clipboard.fill"); }; i.altHint = @"⌘↩ Copy";
         [r addObject:i];
         if (++n >= kMaxRows) break;
     }
@@ -1585,6 +1651,7 @@ static NSString *defaultBrowserName(void) {
 }
 - (void)homeSelect:(NSInteger)i {
     if (i < 0 || i >= (NSInteger)self.items.count) return;
+    if (self.armedItem && self.items[i] != self.armedItem) [self disarm];
     self.selected = i; [self syncHomeSelection]; [self layoutForRows:self.items.count];
 }
 - (void)homeMoveHorizontal:(NSInteger)d {
@@ -1615,6 +1682,7 @@ static NSString *defaultBrowserName(void) {
     NSString *q = [self.field.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     self.currentQuery = q;
     self.modeLabel = nil;
+    self.armedItem = nil; self.armedSubtitle = nil;          // new items, nothing armed
     [self stopFileSearch];
     NSMutableArray *out = [NSMutableArray new];
     NSComparator byScore = ^NSComparisonResult(CItem *a, CItem *b) { return a.score > b.score ? NSOrderedAscending : a.score < b.score ? NSOrderedDescending : NSOrderedSame; };
@@ -1645,7 +1713,7 @@ static NSString *defaultBrowserName(void) {
             NSString *esc = [cmd stringByReplacingOccurrencesOfString:@"\\" withString:@"\\\\"]; esc = [esc stringByReplacingOccurrencesOfString:@"\"" withString:@"\\\""];
             osa([NSString stringWithFormat:@"tell application \"Terminal\"\nactivate\ndo script \"%@\"\nend tell", esc]);
         });
-        i.altAction = ^{ runShell(cmd, ^(NSString *o) { copyText(o); }); };
+        i.altAction = ^{ runShell(cmd, ^(NSString *o) { copyText(o); showHUD(o.length ? @"Output copied" : @"Done · no output", @"terminal.fill"); }); };
         [out addObject:i];
     } else if ([head isEqualToString:@"pw"] || [head isEqualToString:@"pwgen"] || ([head isEqualToString:@"password"] && rest.length)) {
         self.modeLabel = @"Password";
@@ -1663,7 +1731,11 @@ static NSString *defaultBrowserName(void) {
         NSMutableArray *general = [NSMutableArray new];
         [general addObjectsFromArray:[self appItemsFor:q]];
         [general addObjectsFromArray:[self linkItemsFor:q]];
-        for (CItem *c in [self systemCommands]) { double s = fuzzyScore(q, c.title); if (s >= 0) { c.score = s - 8; [general addObject:c]; } }
+        for (CItem *c in [self systemCommands]) {
+            double s = fuzzyScore(q, c.title); if (s < 0) continue;
+            c.score = s - 8 + [self usageBoost:c.key] - (c.confirm.length || [c.title isEqualToString:@"Centre: Quit"] ? 6 : 0);
+            [general addObject:c];
+        }
         [general sortUsingComparator:byScore];
         NSInteger cap = calc ? 5 : 7;
         if (general.count > (NSUInteger)cap) general = [[general subarrayWithRange:NSMakeRange(0, cap)] mutableCopy];
@@ -1788,7 +1860,10 @@ static NSString *defaultBrowserName(void) {
     [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^NSEvent *(NSEvent *e) {
         if (!self.panel.keyWindow) return e;
         NSEventModifierFlags m = e.modifierFlags & NSEventModifierFlagDeviceIndependentFlagsMask;
-        if (e.keyCode == 53) { [self hide]; return nil; }
+        if (e.keyCode == 53) {                              // Esc: clear what you typed first, close on the next press
+            if (self.field.stringValue.length) { self.field.stringValue = @""; [self refresh]; } else [self hide];
+            return nil;
+        }
         if ((m & NSEventModifierFlagCommand) && e.charactersIgnoringModifiers.length == 1) {
             unichar c = [e.charactersIgnoringModifiers characterAtIndex:0];
             if (c >= '1' && c <= '9') { NSInteger idx = c - '1'; if (idx < (NSInteger)self.items.count) { self.selected = idx; [self runSelected:NO]; } return nil; }
@@ -1811,7 +1886,8 @@ static NSString *defaultBrowserName(void) {
     CGFloat appsH = home && self.homeApps > 0 ? kGridH : 0;
     CGFloat quickH = home && self.homeQuick > 0 ? kQuickH : 0;
     CGFloat listH = home ? [self.homeList fittingHeight] : 0;
-    CGFloat bodyH = mediaH + (home ? appsH + quickH + listH : (rows > 0 ? rows * kRowH + 12 : 0));
+    CGFloat tailH = (home && quickH > 0 && listH == 0) ? 10 : 0;   // breathing room when the pills are the last row
+    CGFloat bodyH = mediaH + (home ? appsH + quickH + listH + tailH : (rows > 0 ? rows * kRowH + 12 : 0));
     CGFloat footH = bodyH > 0 ? kFooterH : 0;
     CGFloat H = kSearchH + bodyH + footH;
     NSRect fr = self.panel.frame;
@@ -1853,6 +1929,7 @@ static NSString *defaultBrowserName(void) {
                              @"URL": @"Open Link", @"Link": @"Open Link", @"Clipboard": @"Paste", @"File": @"Open File", @"Process": @"Quit App",
                              @"Shell": @"Run", @"System Settings": @"Open Settings", @"Media": @"Control Playback", @"Password": @"Copy Password" };
     NSString *verb = sel ? (verbs[sel.kind ?: @""] ?: @"Run Command") : @"Open";
+    if (sel && sel == self.armedItem) verb = @"Confirm";
     NSMutableArray *h = [NSMutableArray arrayWithObject:@[verb, @"↩"]];
     if (sel.altAction && sel.altAction != sel.action) {
         NSString *alt = sel.altHint.length ? [[sel.altHint stringByReplacingOccurrencesOfString:@"⌘↩" withString:@""] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] : @"Alternate";
@@ -1866,6 +1943,7 @@ static NSString *defaultBrowserName(void) {
 // Pointer moved onto a row / grid cell: it becomes the selection (Enter, footer hints and ⌘↩ follow it).
 - (void)hoverSelect:(NSInteger)i {
     if (i < 0 || i >= (NSInteger)self.items.count || i == self.selected) return;
+    if (!self.gridMode) [self disarm];
     if (self.gridMode) { [self homeSelect:i]; return; }
     self.selected = i; [self reloadTable];
 }
@@ -2132,9 +2210,27 @@ static NSString *const kYTMRecentKickJS = @"(()=>{const v=document.querySelector
 
 - (void)windowDidResignKey:(NSNotification *)n { if (self.panel.visible) [self hide]; }
 
+// First ↩ on an irreversible command shows what will happen; a second ↩ within 4 s runs it.
+- (void)armItem:(CItem *)i {
+    [self disarm];
+    self.armedItem = i; self.armedSubtitle = i.subtitle; self.armedAt = [NSDate date];
+    i.subtitle = i.confirm;
+    if (self.gridMode) [self.homeList reload]; else [self.table reloadData];
+    [self syncHomeSelectionIfNeeded];
+    [self layoutForRows:self.items.count];
+}
+- (void)disarm {
+    CItem *i = self.armedItem; if (!i) return;
+    i.subtitle = self.armedSubtitle; self.armedItem = nil; self.armedSubtitle = nil;
+    if (self.gridMode) { [self.homeList reload]; [self syncHomeSelectionIfNeeded]; } else [self.table reloadData];
+}
+- (void)syncHomeSelectionIfNeeded { if (self.gridMode) [self syncHomeSelection]; }
+
 - (void)runSelected:(BOOL)alt {
     if (self.selected < 0 || self.selected >= (NSInteger)self.items.count) return;
     CItem *i = self.items[self.selected];
+    if (i.confirm.length && !(self.armedItem == i && [self.armedAt timeIntervalSinceNow] > -4)) { [self armItem:i]; return; }
+    [self disarm];
     if (i.key.length) [self recordUse:i.key];          // feeds Recent Commands
     CAction a = alt ? (i.altAction ?: i.action) : i.action;
     [self hide];
@@ -2145,6 +2241,7 @@ static NSString *const kYTMRecentKickJS = @"(()=>{const v=document.querySelector
 
 - (void)moveSelection:(NSInteger)d {
     if (!self.items.count) return;
+    [self disarm];
     NSInteger old = self.selected;
     self.selected = (self.selected + d + (NSInteger)self.items.count) % (NSInteger)self.items.count;
     if (self.gridMode) [self syncHomeSelection];
@@ -2337,6 +2434,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     runShell([NSString stringWithFormat:@"cd '%@' && chmod +x centre && CENTRE_NO_LAUNCH=1 ./centre build 2>&1", dir], ^(NSString *out) {
         if ([out containsString:@"Built "] && ![out containsString:@"error:"]) {
             // Success: hand over to the fresh binary. The helper outlives us, waits, then opens the new build.
+            [self saveClipHandoff];
             NSTask *t = [NSTask new]; t.launchPath = @"/bin/sh";
             t.arguments = @[@"-c", [NSString stringWithFormat:@"sleep 1; open '%@'", [NSBundle mainBundle].bundlePath]];
             [t launch];
@@ -2350,6 +2448,26 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
         al.informativeText = out.length > 3000 ? [out substringFromIndex:out.length - 3000] : out;
         [al runModal];
     });
+}
+
+#pragma mark Clipboard hand-off
+// History is memory-only. Across a self-rebuild it is passed to the new process through a private (0600) file
+// that the new process deletes on launch; a hand-off older than two minutes is discarded unread.
+- (NSString *)handoffPath { return [supportDir() stringByAppendingPathComponent:@".clips-handoff"]; }
+- (void)saveClipHandoff {
+    if (!self.clips.count) return;
+    NSData *d = [NSJSONSerialization dataWithJSONObject:self.clips options:0 error:nil];
+    if (d) [[NSFileManager defaultManager] createFileAtPath:self.handoffPath contents:d attributes:@{NSFilePosixPermissions: @0600}];
+}
+- (void)loadClipHandoff {
+    NSFileManager *fm = [NSFileManager defaultManager]; NSString *p = self.handoffPath;
+    NSDictionary *at = [fm attributesOfItemAtPath:p error:nil]; if (!at) return;
+    NSData *d = [NSData dataWithContentsOfFile:p];
+    [fm removeItemAtPath:p error:nil];
+    if (-[at.fileModificationDate timeIntervalSinceNow] > 120 || !d) return;
+    NSArray *a = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
+    if (![a isKindOfClass:[NSArray class]]) return;
+    for (id x in a) if ([x isKindOfClass:[NSString class]] && self.clips.count < 100) [self.clips addObject:x];
 }
 
 #pragma mark Lifecycle
@@ -2417,6 +2535,14 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 }
 - (void)snapshotAll {
     if (self.readmeMode) { [self readmeShots]; return; }
+    NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    [self buildUI]; [self positionPanel];
+    self.field.stringValue = @"empty trash"; [self refresh]; [self stopFileSearch];
+    for (CItem *c in self.items) if (c.confirm.length) { self.selected = (NSInteger)[self.items indexOfObject:c]; [self armItem:c]; break; }
+    [self snapshotView:self.panel.contentView name:@"dark-18-confirm" radius:kRadius];
+    self.field.stringValue = @"centre"; [self refresh]; [self stopFileSearch];
+    [self snapshotView:self.panel.contentView name:@"dark-19-centre-ranked" radius:kRadius];
+    [self snapshotView:prepareHUD(@"Password copied · clears in 90 s", @"key.fill").contentView name:@"dark-20-hud" radius:20];
     NSArray *queries = @[@"", @"sa", @"window", @"12*7+3", @"pw 24", @"zzqx", @"clip ", @"kill ", @"play", @"centre"];
     NSArray *names = @[@"1-home", @"2-apps", @"3-commands", @"4-calc", @"5-password", @"6-nomatch", @"7-clip", @"8-kill", @"9-media", @"10-centre"];
     for (NSString *mode in @[@"dark", @"light"]) {
@@ -2499,6 +2625,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
         usingBlock:^(NSNotification *note) { [self show]; }];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     self.iconCache = [NSMutableDictionary new]; self.clips = [NSMutableArray new]; self.items = @[];
+    [self loadClipHandoff];
     self.pbCount = [NSPasteboard generalPasteboard].changeCount;
     [self loadUsage]; [self loadConfig];
     [self buildUI];

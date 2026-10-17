@@ -47,6 +47,7 @@
 | --- | --- |
 | `⌘ Space` | Open or close Centre |
 | `↩` | Run the selected item |
+| `Esc` | Clear the search, then close |
 | `⌘ ↩` | Alternate action: reveal in Finder, copy only, force quit |
 | `⌘ 1` … `⌘ 9` | Run an item by position (hold `⌘` to see the numbers) |
 | `⌘ P` · `⌘ [` · `⌘ ]` | Play / pause · previous · next |
@@ -91,7 +92,7 @@ Everything is set in a native settings window (`⌘ ,`) and stored in `~/Library
 
 ## Privacy
 
-No accounts and no analytics. Clipboard history lives in memory only and skips items that password managers mark as concealed. Generated passwords are marked concealed too, and are cleared from the clipboard after 90 seconds.
+No accounts and no analytics. Clipboard history lives in memory only (when Centre rebuilds itself it's handed to the new process through a private file that is deleted straight away) and skips items that password managers mark as concealed. Generated passwords are marked concealed too, and are cleared from the clipboard after 90 seconds.
 
 <br>
 
