@@ -1,0 +1,12 @@
+# Build output — ./centre rebuilds it from Centre.m
+Centre.app/
+build.log
+
+# Local backups and scratch
+*.bak
+_to_delete/
+.snapshots/
+.DS_Store
+
+# Personal notes, not part of the app
+Assistant Context.txt

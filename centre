@@ -1,0 +1,57 @@
+#!/bin/bash
+# Centre launcher — builds (if needed) and runs Centre.app. Needs only Command Line Tools (clang).
+#   ./centre          build if changed, then (re)launch
+#   ./centre build    force rebuild
+#   ./centre stop     quit Centre
+#   ./centre log      show recent Centre log lines
+set -e
+DIR="$(cd "$(dirname "$0")" && pwd)"
+APP="$DIR/Centre.app"
+BIN="$APP/Contents/MacOS/Centre"
+SRC="$DIR/Centre.m"
+
+if [ "$1" = "stop" ]; then pkill -x Centre 2>/dev/null || true; echo "Centre stopped"; exit 0; fi
+if [ "$1" = "log" ]; then log show --predicate 'process == "Centre"' --last 10m --style compact 2>/dev/null | tail -40; exit 0; fi
+
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cat > "$APP/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleName</key><string>Centre</string>
+  <key>CFBundleDisplayName</key><string>Centre</string>
+  <key>CFBundleIdentifier</key><string>com.y.centre</string>
+  <key>CFBundleExecutable</key><string>Centre</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleIconFile</key><string>Centre</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Centre runs system commands (sleep, dark mode, empty trash, login item) through System Events and Finder.</string>
+  <key>NSHumanReadableCopyright</key><string>Y</string>
+</dict></plist>
+PLIST
+[ -f "$DIR/Centre.icns" ] && cp -f "$DIR/Centre.icns" "$APP/Contents/Resources/Centre.icns"
+touch "$APP"   # nudge Finder/Dock icon cache
+
+if [ "$1" = "build" ] || [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ]; then
+  echo "Compiling Centre…"
+  set -o pipefail
+  clang -fobjc-arc -O2 -Wall -Wno-deprecated-declarations -Wno-multichar -Wno-unused-variable \
+    -framework Cocoa -framework Carbon -framework ApplicationServices -framework QuartzCore \
+    "$SRC" -o "$BIN" 2>&1 | tee "$DIR/build.log"
+  set +o pipefail
+  if command -v codesign >/dev/null 2>&1; then
+    codesign -s - -f --identifier com.y.centre "$APP" >/dev/null 2>&1 || true
+  fi
+  echo "Built $APP"
+fi
+
+[ -n "$CENTRE_NO_LAUNCH" ] && exit 0   # in-app rebuild: the app relaunches itself
+pkill -x Centre 2>/dev/null || true
+for i in $(seq 1 30); do pgrep -x Centre >/dev/null || break; sleep 0.1; done   # wait for old one to exit
+pkill -9 -x Centre 2>/dev/null || true
+open "$APP"
+echo "Centre is running — press ⌘ Space. Menu-bar icon: ◎"
