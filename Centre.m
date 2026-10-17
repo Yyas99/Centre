@@ -2880,11 +2880,14 @@ static NSArray *searchEngines(void) {
                             setRow(@"File results", @"Include Spotlight file matches in search.", [self switchFor:@"fileResults" fallback:YES])])];
     [self gap];
 
+    // Browser details only matter once YouTube Music control is on.
     NSString *browser = [self.app ytmBrowser];
-    [self addHeader:@"Media" note:[NSString stringWithFormat:@"YouTube Music control needs two one-time permissions: allow Centre to control %@ when macOS asks, and in %@ turn on View › Developer › Allow JavaScript from Apple Events.", browser, browser]];
-    [self addFull:setCard(@[setRow(@"Control any media player", @"Whatever last played: a video, podcast or another app.", [self switchFor:@"showMediaPlayer" fallback:YES]),
-                            setRow(@"Control YouTube Music", @"Always targets the YouTube Music tab, even while a video plays.", [self switchFor:@"mediaYTM" fallback:NO]),
-                            setRow(@"Browser", @"Where YouTube Music runs. Starts Liked Music if no tab is open.", setField(browser, browser, 150, self, @selector(ytmBrowserChanged:)))])];
+    BOOL ytm = [self.app.config[@"mediaYTM"] boolValue];
+    [self addHeader:@"Media" note:ytm ? [NSString stringWithFormat:@"YouTube Music control needs two one-time permissions: allow Centre to control %@ when macOS asks, and in %@ turn on View › Developer › Allow JavaScript from Apple Events.", browser, browser] : nil];
+    NSMutableArray *mediaRows = [@[setRow(@"Control any media player", @"Whatever last played: a video, podcast or another app.", [self switchFor:@"showMediaPlayer" fallback:YES]),
+                                  setRow(@"Control YouTube Music", @"Always targets the YouTube Music tab, even while a video plays.", [self switchFor:@"mediaYTM" fallback:NO])] mutableCopy];
+    if (ytm) [mediaRows addObject:setRow(@"Browser", @"Where YouTube Music runs. Starts Liked Music if no tab is open.", setField(browser, browser, 150, self, @selector(ytmBrowserChanged:)))];
+    [self addFull:setCard(mediaRows)];
     [self gap];
 
     NSView *ax;
@@ -3063,7 +3066,10 @@ static NSArray *searchEngines(void) {
     [self.app writeConfig:c];
 }
 
-- (void)switchChanged:(NSSwitch *)s { [self saveKey:s.identifier value:@(s.state == NSControlStateValueOn)]; }
+- (void)switchChanged:(NSSwitch *)s {
+    [self saveKey:s.identifier value:@(s.state == NSControlStateValueOn)];
+    if ([s.identifier isEqualToString:@"mediaYTM"]) [self showPage:self.page];   // reveal or hide the browser row
+}
 - (void)loginChanged:(NSSwitch *)s {
     BOOL on = s.state == NSControlStateValueOn;
     [self saveKey:@"launchAtLogin" value:@(on)];
