@@ -2703,6 +2703,7 @@ static NSTextField *setField(NSString *value, NSString *placeholder, CGFloat wid
 @property (nonatomic, strong) NSPopUpButton *enginePopup;
 @property (nonatomic, strong) NSTextField *customURL;
 @property (nonatomic, strong) CHotkeyButton *hotkeyButton;
+@property (nonatomic) BOOL axShown;   // Accessibility state the General page was built with
 @end
 
 static NSArray *settingsPages(void) {
@@ -2793,6 +2794,9 @@ static NSArray *searchEngines(void) {
 #pragma mark Page scaffolding
 
 - (void)showPage:(NSInteger)i {
+    // Rebuilding the page you're on keeps your scroll position; switching pages starts at the top.
+    NSPoint keep = (i == self.page && self.pageStack) ? self.doc.enclosingScrollView.contentView.bounds.origin : NSZeroPoint;
+    self.axShown = AXIsProcessTrusted();
     [self.hotkeyButton stop];
     [self.window makeFirstResponder:nil];
     self.page = i;
@@ -2817,7 +2821,8 @@ static NSArray *searchEngines(void) {
         case 2: [self buildLinks]; break;
         default: [self buildAdvanced]; break;
     }
-    [self.doc scrollPoint:NSZeroPoint];
+    [self.doc layoutSubtreeIfNeeded];
+    [self.doc scrollPoint:keep];
 }
 
 - (void)addFull:(NSView *)v {
@@ -3105,7 +3110,8 @@ static NSArray *searchEngines(void) {
 - (void)windowWillClose:(NSNotification *)n { [self.hotkeyButton stop]; [self.window makeFirstResponder:nil]; }
 - (void)windowDidBecomeKey:(NSNotification *)n {
     // Refresh the Accessibility status after returning from System Settings.
-    if (self.page == 0 && self.pageStack && !self.hotkeyButton.monitor) [self showPage:0];
+    // Only rebuild when the status actually changed, so clicking back into the window never jumps the page.
+    if (self.page == 0 && self.pageStack && !self.hotkeyButton.monitor && AXIsProcessTrusted() != self.axShown) [self showPage:0];
 }
 @end
 
