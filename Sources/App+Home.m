@@ -33,38 +33,27 @@
     return out;
 }
 
-- (NSArray<CItem *> *)quickActions {
-    NSArray *order = @[@[@"Lock Screen", @"Lock"], @[@"Sleep", @"Sleep"], @[@"Toggle Dark Mode", @"Dark Mode"],
-                       @[@"Generate Password", @"Password"], @[@"Show Desktop", @"Desktop"], @[@"Mute / Unmute", @"Mute"]];
-    NSMutableDictionary *byTitle = [NSMutableDictionary new];
-    for (CItem *c in [self systemCommands]) byTitle[c.title] = c;
-    NSMutableArray *out = [NSMutableArray new];
-    for (NSArray *o in order) { CItem *c = byTitle[o[0]]; if (!c) continue; c.title = o[1]; [out addObject:c]; }
-    return out;
-}
+- (NSArray<CItem *> *)quickActions { return [self pinnedItems]; }
 
-// Commands and quick links you ran, newest first (usage keys "cmd:<title>" and link URLs).
+// Commands, snippets, transforms and links you ran, newest first.
 - (NSArray<CItem *> *)recentCommands:(NSInteger)limit exclude:(NSSet *)skip {
-    NSMutableDictionary *byKey = [NSMutableDictionary new];
-    for (CItem *c in [self systemCommands]) if (c.key) byKey[c.key] = c;
-    NSMutableDictionary *links = [NSMutableDictionary new];
+    NSMutableSet *links = [NSMutableSet new];
     for (NSDictionary *l in ([self.config[@"links"] isKindOfClass:[NSArray class]] ? self.config[@"links"] : @[]))
-        if ([l isKindOfClass:[NSDictionary class]] && [l[@"url"] isKindOfClass:[NSString class]]) links[l[@"url"]] = l;
+        if ([l isKindOfClass:[NSDictionary class]] && [l[@"url"] isKindOfClass:[NSString class]]) [links addObject:l[@"url"]];
     NSMutableArray *keys = [NSMutableArray new];
-    for (NSString *k in self.usage) if ((byKey[k] || links[k]) && ![skip containsObject:k]) [keys addObject:k];
+    for (NSString *k in self.usage) {
+        BOOL runnable = [k hasPrefix:@"cmd:"] || [k hasPrefix:@"custom:"] || [k hasPrefix:@"snip:"] || [k hasPrefix:@"tx:"] || [links containsObject:k];
+        if (runnable && ![skip containsObject:k]) [keys addObject:k];
+    }
     [keys sortUsingComparator:^NSComparisonResult(NSString *x, NSString *y) {
         double a = [self.usage[x][@"last"] doubleValue], b = [self.usage[y][@"last"] doubleValue];
         return a > b ? NSOrderedAscending : a < b ? NSOrderedDescending : NSOrderedSame; }];
     NSMutableArray *out = [NSMutableArray new];
-    __weak CApp *ws = self;
     for (NSString *k in keys) {
         if ((NSInteger)out.count >= limit) break;
-        CItem *i = byKey[k];
-        if (!i) {
-            NSString *url = k, *name = [links[k][@"name"] isKindOfClass:[NSString class]] ? links[k][@"name"] : url;
-            i = mk(name, nil, @"Link", @"link", ^{ [ws recordUse:url]; openURLString(url); });
-        }
-        i.subtitle = nil;
+        CItem *i = [self itemForKey:k]; if (!i || i.keepsPanel) continue;
+        if (!i.key) i.key = k;
+        if (![i.kind isEqualToString:@"Transform"]) i.subtitle = nil;
         i.detail = shortAgo([self.usage[k][@"last"] doubleValue]);
         [out addObject:i];
     }
@@ -114,41 +103,66 @@
     }
 }
 
+// Home: Most Used apps, your pins, then what's useful right now — timers, the text you selected,
+// actions for the app you came from, clipboard, recent files and commands — trimmed to fit one glance.
 - (void)buildHome {
-    BOOL extras = ![self.config[@"showHomeExtras"] isEqual:@NO];
+    BOOL legacyOff = [self.config[@"showHomeExtras"] isEqual:@NO];
+    BOOL (^on)(NSString *) = ^BOOL(NSString *k) { id v = self.config[k]; return v ? [v boolValue] : !legacyOff; };
     NSArray *apps = self.readmeApps ?: ([self.config[@"showMostUsed"] isEqual:@NO] ? @[] : [self mostUsedApps]);
-    NSArray *quick = extras ? [self quickActions] : @[];
-    NSMutableArray *entries = [NSMutableArray new], *rows = [NSMutableArray new];
-    if (self.timers.count) {   // running timers come first: they're time-sensitive
-        NSArray *ts = [self activeTimerItems];
-        [entries addObject:@"Timers"]; [entries addObjectsFromArray:ts]; [rows addObjectsFromArray:ts];
+    NSArray *quick = on(@"homePinned") ? [self pinnedItems] : @[];
+    NSInteger fit = quickStripFit(quick, kW);
+    if ((NSInteger)quick.count > fit) quick = [quick subarrayWithRange:NSMakeRange(0, (NSUInteger)fit)];
+
+    NSArray *timers = self.timers.count ? [self activeTimerItems] : @[];
+    NSMutableArray *selection = [(on(@"homeContext") ? [self selectionItems] : @[]) mutableCopy];
+    NSMutableArray *context = [(on(@"homeContext") && !selection.count ? [self appContextItems] : @[]) mutableCopy];
+    if (context.count > 3) [context removeObjectsInRange:NSMakeRange(3, context.count - 3)];
+    NSMutableArray *clips = [NSMutableArray new], *files = [NSMutableArray new], *cmds = [NSMutableArray new];
+    if (on(@"homeClipboard")) {
+        NSArray *cl = [self clipItems:@""];
+        for (NSUInteger k = 0; k < MIN(cl.count, (NSUInteger)2); k++) {
+            CItem *c = cl[k]; c.subtitle = nil;
+            if (k < self.clips.count) c.detail = [NSString stringWithFormat:@"%lu chars", (unsigned long)self.clips[k].length];
+            [clips addObject:c];
+        }
     }
-    if (extras) {
-        NSArray *clips = [self clipItems:@""];
-        if (clips.count) {
-            [entries addObject:@"Clipboard"];
-            for (NSUInteger k = 0; k < MIN(clips.count, (NSUInteger)2); k++) {
-                CItem *c = clips[k]; c.subtitle = nil;
-                if (k < self.clips.count) c.detail = [NSString stringWithFormat:@"%lu chars", (unsigned long)self.clips[k].length];
-                [entries addObject:c]; [rows addObject:c];
-            }
-        }
-        NSMutableArray *files = [NSMutableArray new];
-        for (NSDictionary *f in self.recentFiles) {
-            if (files.count >= 3) break;
-            NSString *p = f[@"path"];
-            CItem *i = [CItem new]; i.title = p.lastPathComponent; i.subtitle = [p.stringByDeletingLastPathComponent stringByAbbreviatingWithTildeInPath];
-            i.kind = @"File"; i.path = p; i.detail = shortAgo([f[@"date"] timeIntervalSince1970]);
-            i.action = ^{ [[NSWorkspace sharedWorkspace] openFile:p]; };
-            i.altAction = ^{ [[NSWorkspace sharedWorkspace] selectFile:p inFileViewerRootedAtPath:@""]; };
-            i.altHint = @"⌘↩ Reveal";
-            [files addObject:i];
-        }
-        if (files.count) { [entries addObject:@"Recent Files"]; [entries addObjectsFromArray:files]; [rows addObjectsFromArray:files]; }
+    if (on(@"homeFiles")) for (NSDictionary *f in self.recentFiles) {
+        if (files.count >= 3) break;
+        NSString *p = f[@"path"];
+        CItem *i = [CItem new]; i.title = p.lastPathComponent; i.subtitle = [p.stringByDeletingLastPathComponent stringByAbbreviatingWithTildeInPath];
+        i.kind = @"File"; i.path = p; i.detail = shortAgo([f[@"date"] timeIntervalSince1970]);
+        i.action = ^{ [[NSWorkspace sharedWorkspace] openFile:p]; };
+        i.altAction = ^{ [[NSWorkspace sharedWorkspace] selectFile:p inFileViewerRootedAtPath:@""]; };
+        i.altHint = @"⌘↩ Reveal";
+        [files addObject:i];
+    }
+    if (on(@"homeCommands")) {
         NSMutableSet *skip = [NSMutableSet new]; for (CItem *c in quick) if (c.key) [skip addObject:c.key];
-        NSArray *cmds = [self recentCommands:2 exclude:skip];
-        if (cmds.count) { [entries addObject:@"Recent Commands"]; [entries addObjectsFromArray:cmds]; [rows addObjectsFromArray:cmds]; }
+        [cmds addObjectsFromArray:[self recentCommands:2 exclude:skip]];
     }
+    // One glance: drop the least time-sensitive rows first.
+    NSInteger budget = 8;
+    NSInteger (^total)(void) = ^NSInteger { return (NSInteger)(timers.count + selection.count + context.count + clips.count + files.count + cmds.count); };
+    while (total() > budget) {
+        if (cmds.count) [cmds removeLastObject];
+        else if (files.count > 1) [files removeLastObject];
+        else if (clips.count > 1) [clips removeLastObject];
+        else if (context.count > 2) [context removeLastObject];
+        else if (files.count) [files removeLastObject];
+        else if (clips.count) [clips removeLastObject];
+        else break;
+    }
+    NSMutableArray *entries = [NSMutableArray new], *rows = [NSMutableArray new];
+    void (^section)(NSString *, NSArray *) = ^(NSString *title, NSArray *list) {
+        if (!list.count) return;
+        [entries addObject:title]; [entries addObjectsFromArray:list]; [rows addObjectsFromArray:list];
+    };
+    section(@"Timers", timers);
+    section(@"Selected Text", selection);
+    section([@"In " stringByAppendingString:self.contextAppName ?: @"this app"], context);
+    section(@"Clipboard", clips);
+    section(@"Recent Files", files);
+    section(@"Recent Commands", cmds);
     NSMutableArray *all = [NSMutableArray arrayWithArray:apps];
     [all addObjectsFromArray:quick]; [all addObjectsFromArray:rows];
     self.homeApps = (NSInteger)apps.count; self.homeQuick = (NSInteger)quick.count; self.homeEntries = entries;

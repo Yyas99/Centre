@@ -28,6 +28,7 @@ typedef void (^CAction)(void);
 @property (nonatomic, copy) NSString *keywords;  // other words people type for this command ("empty" for Clear Clipboard)
 @property (nonatomic, copy) NSString *verb;      // footer label for ↩ when the kind's default doesn't fit ("Cancel Timer")
 @property (nonatomic, copy) NSString *completion; // what Tab puts in the search field ("~/Documents/")
+@property (nonatomic) BOOL keepsPanel;              // ↩ leads somewhere inside Centre (asks for input, opens a mode)
 @end
 
 CItem *mk(NSString *title, NSString *sub, NSString *kind, NSString *symbol, CAction action);
@@ -74,6 +75,22 @@ BOOL evaluateMath(NSString *q, double *out);
 NSString *convertUnits(NSString *q, double *out);
 NSTimeInterval parseDuration(NSString *s);
 NSDictionary *pathCompletions(NSString *q, NSString *home, NSUInteger limit);
+
+#pragma mark - Text, time and hotkey logic (Logic.m)
+
+NSArray<NSString *> *transformNames(void);
+NSString *transformText(NSString *name, NSString *s);
+NSString *textStats(NSString *s);
+NSString *cleanURL(NSString *s);
+NSString *expandSnippet(NSString *text, NSString *clipboard, NSDate *now);
+NSArray<NSString *> *flowSteps(NSString *script);
+NSString *shellQuote(NSString *s);
+NSString *appleScriptQuote(NSString *s);
+BOOL parseHotkey(NSString *spec, UInt32 *keyOut, UInt32 *modsOut);
+NSTimeZone *zoneForPlace(NSString *place);
+NSDictionary *timeQuery(NSString *q, NSDate *now, NSTimeZone *local);
+NSArray<NSArray<NSString *> *> *emojiTable(void);
+NSArray<NSDictionary *> *parseLsof(NSString *out);
 
 #pragma mark - Theme and HUD (Theme.m)
 

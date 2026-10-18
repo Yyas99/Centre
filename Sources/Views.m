@@ -210,17 +210,24 @@
 }
 @end
 
-// ---------- Quick actions: a row of pill buttons under Most Used ----------
-@implementation CQuickStrip
-- (NSDictionary *)attrs:(BOOL)sel {
+// ---------- Pinned: a row of pill buttons under Most Used ----------
+static NSDictionary *pillAttrs(BOOL sel) {
     return @{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium],
              NSForegroundColorAttributeName: sel ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.78]};
 }
+static CGFloat pillWidth(CItem *it) { return 12 + 16 + 7 + ceil([it.title ?: @"" sizeWithAttributes:pillAttrs(NO)].width) + 14; }
+NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
+    CGFloat x = kInset; NSInteger n = 0;
+    for (CItem *it in items) { CGFloat w = pillWidth(it); if (x + w > width - kInset) break; x += w + 8; n++; }
+    return n;
+}
+@implementation CQuickStrip
+- (NSDictionary *)attrs:(BOOL)sel { return pillAttrs(sel); }
 - (NSArray<NSValue *> *)pillRects {
     NSMutableArray *r = [NSMutableArray new];
     CGFloat x = kInset, H = self.bounds.size.height, h = 32;
     for (CItem *it in self.items) {
-        CGFloat w = 12 + 16 + 7 + ceil([it.title sizeWithAttributes:[self attrs:NO]].width) + 14;
+        CGFloat w = pillWidth(it);
         if (x + w > self.bounds.size.width - kInset) break;          // never overflow the panel
         [r addObject:[NSValue valueWithRect:NSMakeRect(x, floor((H - h) / 2), w, h)]];
         x += w + 8;
@@ -240,8 +247,11 @@
         CItem *it = self.items[i];
         NSArray<NSColor *> *tc = tileColors(it.kind);
         NSColor *tint = [it.kind isEqualToString:@"System"] || [it.kind isEqualToString:@"Centre"] ? [NSColor secondaryLabelColor] : (dark ? tc[0] : tc[1]);
-        NSImage *g = tintedSymbol(it.symbol, 12, tint);
-        NSSize gs = g.size; CGFloat k = MIN(1.0, 16.0 / MAX(MAX(gs.width, gs.height), 1));
+        NSImage *g = it.symbol ? tintedSymbol(it.symbol, 12, tint) : nil;
+        if (!g && self.iconFor) g = self.iconFor(it);                 // pinned apps, folders and files use their real icons
+        if (g.template) g = tintedSymbol(it.symbol ?: @"circle", 12, tint);
+        NSSize gs = g.size.width > 0 ? g.size : NSMakeSize(16, 16); CGFloat k = 16.0 / MAX(MAX(gs.width, gs.height), 1);
+        if (it.symbol) k = MIN(1.0, k);
         NSRect ir = NSMakeRect(b.origin.x + 12 + (16 - gs.width * k) / 2, floor(NSMidY(b) - gs.height * k / 2), gs.width * k, gs.height * k);
         [g drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
         ir = NSMakeRect(b.origin.x + 12, 0, 16, 0);

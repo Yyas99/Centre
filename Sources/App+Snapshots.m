@@ -85,6 +85,29 @@
     self.field.stringValue = @""; [self refresh];
     [self snapshotView:self.panel.contentView name:@"dark-28-home-timer" radius:kRadius];
     self.timers = nil;
+    // Context-aware home: text selected in another app, then arriving from a browser
+    self.selectedText = @"The quick brown fox jumps over the lazy dog"; self.contextAppName = @"Notes"; self.contextBundleID = @"com.apple.Notes";
+    self.field.stringValue = @""; [self refresh];
+    [self snapshotView:self.panel.contentView name:@"dark-30-home-selection" radius:kRadius];
+    self.field.stringValue = @"tx"; [self refresh]; [self stopFileSearch];
+    [self snapshotView:self.panel.contentView name:@"dark-35-transform" radius:kRadius];
+    self.field.stringValue = @"upper"; [self refresh]; [self stopFileSearch];
+    [self snapshotView:self.panel.contentView name:@"dark-38-upper" radius:kRadius];
+    self.selectedText = nil; self.contextAppName = @"Brave Browser"; self.contextBundleID = @"com.brave.Browser";
+    self.field.stringValue = @""; [self refresh];
+    [self snapshotView:self.panel.contentView name:@"dark-31-home-browser" radius:kRadius];
+    self.contextAppName = nil; self.contextBundleID = nil;
+    for (NSArray *q in @[@[@":hea", @"dark-32-emoji"], @[@"time in tokyo", @"dark-33-time"], @[@"3pm melbourne in london", @"dark-34-timeconv"],
+                         @[@"info", @"dark-36-info"], @[@"w ", @"dark-37-windows"], @[@"snip", @"dark-39-snippets"]]) {
+        self.field.stringValue = q[0]; [self refresh]; [self stopFileSearch];
+        [self snapshotView:self.panel.contentView name:q[1] radius:kRadius];
+    }
+    CSettings *st = [[CSettings alloc] initWithApp:self]; [st useSampleData];
+    st.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    for (NSArray *pg in @[@[@"Home", @"dark-40-set-home"], @[@"Commands", @"dark-41-set-commands"], @[@"Snippets", @"dark-42-set-snippets"], @[@"Shortcuts", @"dark-43-set-shortcuts"]]) {
+        [st showPageNamed:pg[0]];
+        [self snapshotView:st.window.contentView name:pg[1] radius:0];
+    }
     NSArray *queries = @[@"", @"sa", @"window", @"12*7+3", @"pw 24", @"zzqx", @"clip ", @"kill ", @"play", @"centre"];
     NSArray *names = @[@"1-home", @"2-apps", @"3-commands", @"4-calc", @"5-password", @"6-nomatch", @"7-clip", @"8-kill", @"9-media", @"10-centre"];
     for (NSString *mode in @[@"dark", @"light"]) {
@@ -120,7 +143,7 @@
         self.settings.window.appearance = ap;
         [self.settings showPage:0];
         [self snapshotView:self.settings.window.contentView name:[mode stringByAppendingString:@"-12-settings"] radius:0];
-        [self.settings showPage:3];
+        [self.settings showPageNamed:@"Permissions"];
         [self snapshotView:self.settings.window.contentView name:[mode stringByAppendingString:@"-21-permissions"] radius:0];
     }
 }
@@ -130,6 +153,7 @@
     [self loadUsage]; [self loadConfig];
     [self buildUI];
     [self scanApps];
+    [self refreshWindowList];
     if (self.readmeMode) {   // neutral sample data so public screenshots show nothing personal
         [self.clips addObjectsFromArray:@[@"brew install --cask iina", @"Meeting moved to 3:30 pm, room 4.12",
                                           @"https://developer.apple.com/design/human-interface-guidelines", @"git commit -m \"Tighten launcher spacing\""]];

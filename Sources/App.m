@@ -217,6 +217,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     GetEventParameter(evt, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(hk), NULL, &hk);
     UInt32 which = hk.id;
     if (which == 1) dispatch_async(dispatch_get_main_queue(), ^{ [app toggle]; });
+    else if (which >= 100) dispatch_async(dispatch_get_main_queue(), ^{ [app runHotKeyCommand:which - 100]; });   // per-command shortcuts
     return noErr;
 }
 - (void)registerHotKey {
@@ -295,6 +296,10 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     if (!self.settings) self.settings = [[CSettings alloc] initWithApp:self];
     [self.settings show];
 }
+- (void)openSettingsPage:(NSString *)name {
+    [self openSettings];
+    [self.settings showPageNamed:name];
+}
 - (void)writeConfig:(NSDictionary *)c {
     NSData *d = [NSJSONSerialization dataWithJSONObject:c options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
     if (!d) return;
@@ -302,6 +307,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [d writeToFile:self.configPath atomically:YES];
     self.configMtime = nil; [self loadConfig];
     [self registerHotKey];
+    [self registerCommandHotKeys];
     [self updateStatusItem];
     if (![oldFolders isEqual:self.config[@"appFolders"]]) [self scanApps];
 }
@@ -421,6 +427,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [self buildUI];
     [self startMediaObservers];
     [self registerHotKey];
+    [self registerCommandHotKeys];
     [self updateStatusItem];
     [self scanApps];
     [self startRecentFilesQuery];
@@ -437,5 +444,5 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     if (!built || -[built timeIntervalSinceNow] > 90) [self show];
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)a hasVisibleWindows:(BOOL)f { [self show]; return NO; }
-- (void)applicationWillTerminate:(NSNotification *)n { if (self.hotKeyRef) UnregisterEventHotKey(self.hotKeyRef); }
+- (void)applicationWillTerminate:(NSNotification *)n { if (self.hotKeyRef) UnregisterEventHotKey(self.hotKeyRef); [self unregisterCommandHotKeys]; }
 @end

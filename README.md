@@ -25,7 +25,8 @@
 ## Highlights
 
 - **One search for everything.** Apps, System Settings panes, commands, quick links and files (via Spotlight), ranked by how often you use them.
-- **A home screen worth opening.** Now playing with a scrub bar, most-used apps, one-click actions, your latest clipboard, recent files and recent commands.
+- **A home screen that knows what you were doing.** Select text anywhere and Home offers to search, define, translate or transform it. Open Centre from a browser and it can copy the page as a link, a Markdown link or a clean URL; from Finder it opens Terminal there or copies paths. Below that: now playing, most-used apps, your pins, clipboard, recent files and commands.
+- **Yours to shape.** Pin anything to Home with `⇧⌘P`. Write your own shell or AppleScript commands, chain commands into flows, save snippets, and give any of them a global shortcut.
 - **Tools built in.** Calculator and unit conversions, offline dictionary, timers, volume, Keep Awake, password / passphrase / PIN generator, clipboard history, window snapping (halves, thirds, next display), quit and force-quit.
 - **Keyboard first.** Arrow keys everywhere, `⌘1`–`⌘9` to jump, `⌘↩` for the alternate action, `Tab` to complete.
 - **Native and light.** AppKit, vibrancy, light and dark mode. Every build checks itself before it replaces the running app.
@@ -51,6 +52,7 @@
 | `⌘ ↩` | Alternate action: reveal in Finder, copy only, force quit |
 | `⌘ 1` … `⌘ 9` | Run an item by position (hold `⌘` to see the numbers) |
 | `⌘ P` · `⌘ [` · `⌘ ]` | Play / pause · previous · next |
+| `⇧ ⌘ P` | Pin or unpin the selection on Home |
 | `⌘ ,` | Settings |
 | `Tab` | Complete an app name or a path |
 
@@ -70,6 +72,13 @@
 | `define serendipity` | Look a word up in the macOS dictionary (works offline) |
 | `timer 10m tea` · `timers` | Start a timer (`90s`, `1h30m`, `25`) or see and cancel running ones |
 | `vol 40` | Set the output volume |
+| `w safari` | Switch to any open window by its title |
+| `tx` · `upper` | Transform the selection or clipboard: case, JSON, Base64, URL encoding, clean URLs, line tools |
+| `snip` · your keyword | Paste a snippet; `{date}`, `{time}`, `{clipboard}` and more are filled in |
+| `time in tokyo` · `3pm melbourne in london` | Time zones, offline |
+| `:heart` | Paste any emoji by name |
+| `port 3000` | See what's listening and stop it |
+| `info` | Battery, IP addresses, disk, memory, uptime |
 
 ## Build and run
 
@@ -83,13 +92,14 @@ Needs only the Xcode Command Line Tools (`xcode-select --install`).
 
 Or double-click **Rebuild Centre.command**. While Centre is running, saving any file in `Sources/` rebuilds and relaunches it automatically.
 
-Each new build runs `Centre --selftest` (calculator, units, durations, passwords, fuzzy matching) and only replaces the app if every check passes; otherwise the working version stays and the reason is in `build.log`.
+Each new build runs `Centre --selftest` (64 checks: calculator, units, durations, paths, transforms, time zones, snippets, hotkeys, emoji) and only replaces the app if every check passes; otherwise the working version stays and the reason is in `build.log`.
 
 | File | Contains |
 | --- | --- |
 | `Centre.h` · `Util.m` · `Theme.m` | Model, shared helpers, design tokens and the HUD |
 | `Views.h` · `Views.m` | Panel, rows, grid, home lists and the media player |
-| `App.m` · `App+*.m` | The app, split into Search, Home, UI, Media, Tools and Snapshots |
+| `App.m` · `App+*.m` | The app: Search, Home, UI, Media, Tools, Library (pins, your commands, flows, snippets, shortcuts), Context (selection, app actions, windows) and Snapshots |
+| `Logic.m` | Pure logic for transforms, time zones, snippets, hotkeys and emoji — covered by the self-test |
 | `Settings.m` | The settings window |
 | `SelfTest.m` · `main.m` | Build checks and the entry point |
 
@@ -98,7 +108,7 @@ Each new build runs `Centre --selftest` (calculator, units, durations, passwords
 
 ## Settings and permissions
 
-Everything is set in a native settings window (`⌘ ,`) and stored in `~/Library/Application Support/Centre/config.json`.
+Everything is set in a native settings window (`⌘ ,`) and stored in `~/Library/Application Support/Centre/config.json`. Home, Commands, Snippets and Shortcuts each have their own page: reorder pins, write and test commands, edit snippets and record shortcuts there.
 
 **Settings › Permissions** shows what Centre can access and fixes what's missing. Its *Stable signature* step (`setup-signing.sh`) creates a private code-signing certificate on your Mac, so rebuilds keep their permissions instead of macOS asking again after every build.
 

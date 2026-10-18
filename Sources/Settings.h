@@ -7,5 +7,7 @@
 - (instancetype)initWithApp:(CApp *)app;
 - (void)show;
 - (void)showPage:(NSInteger)i;
+- (void)showPageNamed:(NSString *)name;
+- (void)useSampleData;
 @end
 

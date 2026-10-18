@@ -32,8 +32,10 @@
 @property (nonatomic, copy) NSImage *(^iconFor)(CItem *);
 - (void)reload;
 @end
+NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width);   // how many pins fit on one row
 @interface CQuickStrip : NSView
 @property (nonatomic, strong) NSArray<CItem *> *items;
+@property (nonatomic, copy) NSImage *(^iconFor)(CItem *);
 @property (nonatomic) NSInteger selected;            // local index, -1 = none
 @property (nonatomic, copy) void (^onPick)(NSInteger);
 @property (nonatomic, copy) void (^onHover)(NSInteger);

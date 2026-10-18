@@ -74,6 +74,45 @@ int runSelfTests(void) {
     check([pathCompletions(@"documents", home, 8)[@"items"] count] == 0, @"paths: plain words are not paths");
     [fm removeItemAtPath:home error:nil];
 
+    // text transforms
+    check([transformText(@"Title Case", @"hello wORLD it's") isEqualToString:@"Hello World It's"], @"transform: title case");
+    check([transformText(@"Sentence case", @"HELLO there. how ARE you") isEqualToString:@"Hello there. How are you"], @"transform: sentence case");
+    check([transformText(@"camelCase", @"Hello big world") isEqualToString:@"helloBigWorld"], @"transform: camelCase");
+    check([transformText(@"snake_case", @"helloBigWorld") isEqualToString:@"hello_big_world"], @"transform: snake_case from camel");
+    check([transformText(@"kebab-case", @"Hello Big_World") isEqualToString:@"hello-big-world"], @"transform: kebab-case");
+    check([transformText(@"Unique Lines", @"a\nb\na\n") isEqualToString:@"a\nb"], @"transform: unique lines");
+    check([transformText(@"JSON Minify", @"{ \"a\" : [1, 2] }") isEqualToString:@"{\"a\":[1,2]}"], @"transform: JSON minify");
+    check(transformText(@"JSON Pretty", @"{not json") == nil, @"transform: invalid JSON is refused");
+    check([transformText(@"Base64 Decode", transformText(@"Base64 Encode", @"Centre ✓")) isEqualToString:@"Centre ✓"], @"transform: base64 round trip");
+    check([transformText(@"Straight Quotes", @"“hi” it’s") isEqualToString:@"\"hi\" it's"], @"transform: straight quotes");
+    check([cleanURL(@"https://x.com/a?utm_source=t&id=7&fbclid=9") isEqualToString:@"https://x.com/a?id=7"], @"clean URL keeps real parameters");
+    check([textStats(@"two words") hasPrefix:@"2 words"], @"text stats");
+
+    // snippets, flows, quoting, hotkeys
+    NSDate *fixed = [NSDate dateWithTimeIntervalSince1970:1792300000];   // Sun 18 Oct 2026, 05:06 UTC
+    check([expandSnippet(@"[{clipboard}]", @"clip", fixed) isEqualToString:@"[clip]"], @"snippet: clipboard placeholder");
+    check([expandSnippet(@"{iso}", nil, fixed) hasPrefix:@"2026-10-"], @"snippet: iso date");
+    check([flowSteps(@"# focus\nKeep Awake\n\n  wait 1  \n") isEqualToArray:@[@"Keep Awake", @"wait 1"]], @"flow: steps skip comments and blanks");
+    check([shellQuote(@"it's") isEqualToString:@"'it'\\''s'"], @"shell quoting");
+    check([appleScriptQuote(@"say \"hi\"") isEqualToString:@"\"say \\\"hi\\\"\""], @"AppleScript quoting");
+    UInt32 hkey = 0, hmods = 0;
+    check(parseHotkey(@"ctrl+alt+l", &hkey, &hmods) && hkey == kVK_ANSI_L && hmods == (controlKey | optionKey), @"hotkey: ctrl+alt+l");
+    check(!parseHotkey(@"l", NULL, NULL), @"hotkey: a bare key is refused");
+
+    // time zones (fixed instant, Melbourne as home)
+    NSTimeZone *mel = [NSTimeZone timeZoneWithName:@"Australia/Melbourne"];
+    check([timeQuery(@"3pm melbourne in london", fixed, mel)[@"value"] isEqualToString:@"5:00 am"], @"time: 3pm Melbourne in London");
+    check([timeQuery(@"9:30am riyadh to sydney", fixed, mel)[@"value"] isEqualToString:@"5:30 pm"], @"time: Riyadh to Sydney");
+    check(timeQuery(@"time in tokyo", fixed, mel) != nil && timeQuery(@"oslo time", fixed, mel) != nil, @"time: now in a city");
+    check(timeQuery(@"5 km in mi", fixed, mel) == nil && timeQuery(@"time in narnia", fixed, mel) == nil, @"time: non-times are ignored");
+
+    // emoji and ports
+    NSArray *emo = emojiTable(); BOOL grin = NO;
+    for (NSArray *e in emo) if ([e[1] isEqualToString:@"grinning face"]) grin = YES;
+    check(emo.count > 800 && grin, @"emoji: table built with names");
+    NSArray *ls = parseLsof(@"p812\ncnode\nf23\np99\ncPython\n");
+    check(ls.count == 2 && [ls[0][@"name"] isEqualToString:@"node"] && [ls[1][@"pid"] intValue] == 99, @"ports: lsof parsing");
+
     printf("Self-test: %d/%d passed\n", checks - failures, checks);
     return failures;
 }

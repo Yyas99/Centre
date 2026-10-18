@@ -46,6 +46,14 @@
                    @"Awake", awake ? @"sun.max.fill" : @"sun.max", ^{ [ws toggleKeepAwake]; });
     aw.verb = awake ? @"Turn Off" : @"Turn On";
     [a addObject:aw];
+    // Doorways into Centre's modes: pin them, or give them their own shortcut
+    CItem *(^door)(NSString *, NSString *, NSString *, NSString *, NSString *) = ^CItem *(NSString *t, NSString *sub, NSString *kind, NSString *sym, NSString *q) {
+        CItem *d = mk(t, sub, kind, sym, ^{ [ws enterQuery:q]; }); d.keepsPanel = YES; d.verb = @"Open"; return d; };
+    [a addObject:door(@"Switch Window", @"Every open window, searchable  ·  or type  w  and a space", @"Open Window", @"macwindow.on.rectangle", @"w ")];
+    [a addObject:door(@"Transform Text", @"Change the selection or clipboard: case, JSON, Base64, clean URLs…  ·  tx", @"Transform", @"wand.and.stars", @"tx ")];
+    [a addObject:door(@"Snippets", @"Saved text you paste anywhere  ·  snip", @"Snippet", @"text.quote", @"snip ")];
+    [a addObject:door(@"Emoji", @"Search every emoji by name  ·  or type :name", @"Emoji", @"face.smiling", @":")];
+    [a addObject:door(@"System Info", @"Battery, IP address, disk space, uptime  ·  info", @"Info", @"info.circle", @"info")];
     // Centre
     [a addObject:mk(@"Centre: Settings", @"Hotkey, links, search prefixes, app folders", @"Centre", @"slider.horizontal.3", ^{ [ws openSettings]; })];
     [a addObject:mk(@"Centre: Rescan Apps", nil, @"Centre", @"arrow.triangle.2.circlepath", ^{ [ws scanApps]; })];
@@ -64,7 +72,10 @@
                                 @"Show Desktop": @"hide all apps windows", @"Mute / Unmute": @"sound volume audio silence",
                                 @"Shut Down": @"power off turn off", @"Quit All Apps": @"close all apps",
                                 @"Toggle Hidden Files": @"show hidden dotfiles", @"Generate Password": @"new password random",
-                                @"Keep Awake": @"caffeinate no sleep prevent sleep stay awake", @"Window: Next Display": @"move window other screen monitor" };
+                                @"Keep Awake": @"caffeinate no sleep prevent sleep stay awake", @"Window: Next Display": @"move window other screen monitor",
+                                @"Switch Window": @"windows switcher tabs alt tab", @"Transform Text": @"uppercase lowercase case json base64 format convert text",
+                                @"Snippets": @"text expander templates canned replies", @"Emoji": @"emoji smiley symbols picker",
+                                @"System Info": @"battery ip address disk space uptime memory about this mac" };
     for (CItem *c in a) c.keywords = synonyms[c.title];
     return a;
 }
@@ -130,7 +141,7 @@
         double s = fuzzyScore(q, name); if (s < 0) continue;
         CItem *i = mk(name, url, @"Link", @"link", ^{ openURLString(url); });
         i.score = s - 5 + [self usageBoost:url];
-        __weak CApp *ws = self; i.action = ^{ [ws recordUse:url]; openURLString(url); };
+        i.key = url;                                   // runSelected records use by key; pins and hotkeys use it too
         [r addObject:i];
     }
     return r;
@@ -351,7 +362,35 @@
     NSString *head = sp.location == NSNotFound ? lower : [lower substringToIndex:sp.location];
     NSString *rest = sp.location == NSNotFound ? @"" : [[q substringFromIndex:sp.location + 1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
 
-    if ([head isEqualToString:@"kill"] || [head isEqualToString:@"quit"]) {
+    // "w " (just the keyword and a space) already means the mode, even though the query itself is trimmed
+    NSString *raw = self.field.stringValue;
+    BOOL spaced = sp.location != NSNotFound || ([raw hasSuffix:@" "] && raw.length > q.length);
+    if ([q hasPrefix:@":"] || ([head isEqualToString:@"emoji"] && spaced)) {
+        self.modeLabel = @"Emoji";
+        NSString *eq = [q hasPrefix:@":"] ? [[q substringFromIndex:1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] : rest;
+        [out addObjectsFromArray:[self emojiItems:eq]];
+    } else if (([head isEqualToString:@"w"] && spaced) || [head isEqualToString:@"windows"] || ([head isEqualToString:@"switch"] && spaced)) {
+        self.modeLabel = @"Windows";
+        [out addObjectsFromArray:[self windowItems:rest]];
+    } else if (([head isEqualToString:@"tx"] || [head isEqualToString:@"transform"]) && (spaced || [head isEqualToString:@"tx"])) {
+        self.modeLabel = self.selectedText.length ? @"Transform Selection" : @"Transform Clipboard";
+        [out addObjectsFromArray:[self transformItems:rest]];
+    } else if ([head isEqualToString:@"snip"] || [head isEqualToString:@"snippets"] || [head isEqualToString:@"snippet"]) {
+        self.modeLabel = @"Snippets";
+        NSArray *sn = [self snippetItems:rest];
+        if (sn.count) [out addObjectsFromArray:sn];
+        else {
+            __weak CApp *ws = self;
+            CItem *e = mk(rest.length ? @"No snippet matches" : @"No snippets yet", @"↩ opens Settings › Snippets to add one", @"Snippet", @"text.quote", ^{ [ws openSettingsPage:@"Snippets"]; });
+            e.verb = @"Open Settings"; [out addObject:e];
+        }
+    } else if ([head isEqualToString:@"port"] && spaced) {
+        self.modeLabel = @"Port";
+        [out addObjectsFromArray:[self portItems:rest]];
+    } else if (([head isEqualToString:@"info"] || [head isEqualToString:@"sysinfo"]) && !rest.length) {
+        self.modeLabel = @"System Info";
+        [out addObjectsFromArray:[self systemInfoItems]];
+    } else if ([head isEqualToString:@"kill"] || [head isEqualToString:@"quit"]) {
         self.modeLabel = [head isEqualToString:@"kill"] ? @"Force Quit" : @"Quit Apps";
         [out addObjectsFromArray:[self runningAppItems:rest force:[head isEqualToString:@"kill"]]];
         [out sortUsingComparator:byScore];
@@ -395,12 +434,25 @@
         NSString *url = [tpl stringByReplacingOccurrencesOfString:@"%s" withString:urlEncode(rest)];
         [out addObject:mk([NSString stringWithFormat:@"Search %@ for “%@”", head, rest], url, @"Web", @"magnifyingglass", ^{ openURLString(url); })];
     } else {
-        CItem *calc = [self calcItem:q]; if (calc) [out addObject:calc];
+        CItem *calc = [self timeItem:q] ?: [self calcItem:q]; if (calc) [out addObject:calc];
         CItem *url = [self urlItem:q]; if (url) [out addObject:url];
         NSMutableArray *general = [NSMutableArray new];
         [general addObjectsFromArray:[self appItemsFor:q]];
         [general addObjectsFromArray:[self linkItemsFor:q]];
         [general addObjectsFromArray:[self folderItemsFor:q]];
+        [general addObjectsFromArray:[self customItemsFor:q]];
+        [general addObjectsFromArray:[self snippetItems:q]];
+        for (CItem *c in [self appContextItems]) { double s = fuzzyScore(q, c.title); if (s >= 0) { c.score = s - 10; [general addObject:c]; } }
+        if (q.length >= 3) for (NSString *n in transformNames()) {           // "upper" → UPPERCASE the selection or clipboard
+            BOOL prefix = NO;
+            for (NSString *w in [[n.lowercaseString stringByReplacingOccurrencesOfString:@"_" withString:@" "] componentsSeparatedByString:@" "]) if ([w hasPrefix:lower]) prefix = YES;
+            double s = fuzzyScore(q, n); if (!prefix || s < 0) continue;
+            CItem *t = [self transformItem:n]; t.score = s - 14; [general addObject:t];
+        }
+        if (q.length >= 2 && self.windowList.count) {                      // a window whose title you remember
+            NSInteger n = 0;
+            for (CItem *w in [self windowItems:q]) { if (w.score < 60 || n++ >= 2) break; w.score -= 18; [general addObject:w]; }
+        }
         for (CItem *c in [self systemCommands]) {
             double s = fuzzyScore(q, c.title);
             if (c.keywords.length) {                      // synonyms match too, a little below an exact title match

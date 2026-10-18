@@ -61,6 +61,7 @@
     [fx addSubview:grid]; self.grid = grid;
 
     CQuickStrip *qs = [[CQuickStrip alloc] initWithFrame:NSMakeRect(0, 0, kW, kQuickH)]; qs.selected = -1;
+    qs.iconFor = ^NSImage *(CItem *i) { return [ws iconFor:i]; };
     qs.onPick = ^(NSInteger i) { ws.selected = ws.homeApps + i; [ws runSelected:NO]; };
     qs.onHover = ^(NSInteger i) { [ws hoverSelect:ws.homeApps + i]; };
     [fx addSubview:qs]; self.quick = qs;
@@ -85,7 +86,7 @@
     fL.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]; fL.textColor = [NSColor tertiaryLabelColor];
     fL.frame = NSMakeRect(kInset + 24, floor((kFooterH - 16) / 2), 200, 16);
     NSTextField *fR = [NSTextField labelWithString:@""]; fR.hidden = YES;
-    CKeyHints *hints = [[CKeyHints alloc] initWithFrame:NSMakeRect(kW - 18 - 480, 0, 480, kFooterH - 1)];
+    CKeyHints *hints = [[CKeyHints alloc] initWithFrame:NSMakeRect(120, 0, kW - 120 - 18, kFooterH - 1)];
     for (NSView *v in @[fi, fL, fR, hints]) [footer addSubview:v];
     [fx addSubview:footer]; self.footer = footer; self.footerLeft = fL; self.footerRight = fR; self.hints = hints; self.footerIcon = fi;
 
@@ -117,6 +118,9 @@
         if (e.keyCode == 53) {                              // Esc: clear what you typed first, close on the next press
             if (self.field.stringValue.length) { self.field.stringValue = @""; [self refresh]; } else [self hide];
             return nil;
+        }
+        if ((m & NSEventModifierFlagCommand) && (m & NSEventModifierFlagShift) && [e.charactersIgnoringModifiers.lowercaseString isEqualToString:@"p"]) {
+            [self togglePinSelected]; return nil;    // ⇧⌘P pins or unpins the selection to Home
         }
         if ((m & NSEventModifierFlagCommand) && e.charactersIgnoringModifiers.length == 1) {
             unichar c = [e.charactersIgnoringModifiers characterAtIndex:0];
@@ -190,8 +194,9 @@
         NSString *alt = sel.altHint.length ? [[sel.altHint stringByReplacingOccurrencesOfString:@"⌘↩" withString:@""] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] : @"Alternate";
         [h addObject:@[alt, @"⌘", @"↩"]];
     }
-    if (showMedia) [h addObject:@[@"Play/Pause", @"⌘", @"P"]];
-    [h addObject:@[@"Settings", @"⌘", @","]];
+    if (showMedia && !sel.altAction) [h addObject:@[@"Play/Pause", @"⌘", @"P"]];
+    if ([self pinKeyFor:sel]) [h addObject:@[[self isPinned:sel] ? @"Unpin" : @"Pin", @"⇧", @"⌘", @"P"]];
+    else [h addObject:@[@"Settings", @"⌘", @","]];
     self.hints.hints = h;
 }
 
@@ -227,6 +232,9 @@
 - (void)show {
     [self loadConfig];
     self.previousApp = [NSWorkspace sharedWorkspace].frontmostApplication;
+    if (self.previousApp == NSRunningApplication.currentApplication && !self.panel.visible) self.previousApp = nil;
+    [self captureContext];                        // selected text + the app in front, read before the panel takes focus
+    self.windowList = nil; [self refreshWindowList];
     self.cmdHeld = NO;
     if ([NSDate date].timeIntervalSince1970 - self.lastScan > 120) [self scanApps];
     [self positionPanel];
@@ -273,7 +281,7 @@
     [self disarm];
     if (i.key.length) [self recordUse:i.key];          // feeds Recent Commands
     CAction a = alt ? (i.altAction ?: i.action) : i.action;
-    [self hide];
+    if (!(i.keepsPanel && !alt)) [self hide];        // rows that lead to another mode keep the panel open
     if (a) a();
 }
 

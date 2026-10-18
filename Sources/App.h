@@ -68,6 +68,14 @@
 @property (nonatomic) BOOL hotkeyFailed;                               // another app owns the shortcut
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *timers;   // @{end, label, total, timer}
 @property (nonatomic) IOPMAssertionID awakeAssertion;                  // non-zero while Keep Awake is on
+@property (nonatomic, copy) NSString *selectedText;                    // what was selected in the app you came from
+@property (nonatomic, copy) NSString *contextBundleID, *contextAppName;
+@property (nonatomic, strong) NSArray<NSDictionary *> *windowList;    // every window, read as Centre opens; nil while reading
+@property (nonatomic, strong) NSMutableArray<NSValue *> *cmdHotKeyRefs;
+@property (nonatomic, strong) NSMutableArray<NSString *> *cmdHotKeyKeys;   // index = hotkey id − 100
+@property (nonatomic, strong) NSMutableSet<NSString *> *hotKeyFailures;    // keys whose shortcut another app owns
+@property (nonatomic, copy) NSString *hotKeyArmedKey;                 // irreversible command waiting for its shortcut again
+@property (nonatomic, strong) NSDate *hotKeyArmedAt;
 - (NSString *)configPath;
 - (void)loadConfig;
 - (NSString *)usagePath;
@@ -89,6 +97,7 @@
 - (void)updateStatusMenu;
 - (void)openConfigFile;
 - (void)openSettings;
+- (void)openSettingsPage:(NSString *)name;
 - (void)writeConfig:(NSDictionary *)c;
 - (void)setLaunchAtLogin:(BOOL)on;
 - (void)resetUsage;
@@ -184,6 +193,53 @@
 - (void)startTimer:(NSTimeInterval)secs label:(NSString *)label;
 - (NSArray<CItem *> *)volumeItems:(NSString *)rest;
 - (void)toggleKeepAwake;
+@end
+
+@interface CApp (Library)
+- (NSArray<NSDictionary *> *)customCommands;
+- (NSArray<NSDictionary *> *)snippets;
+- (void)deliverText:(NSString *)s paste:(BOOL)paste;
+- (NSString *)iconForCommand:(NSDictionary *)c;
+- (CItem *)customItem:(NSDictionary *)c arg:(NSString *)arg;
+- (NSArray<CItem *> *)customItemsFor:(NSString *)q;
+- (void)askInputFor:(NSString *)name;
+- (void)runCustom:(NSDictionary *)c arg:(NSString *)arg;
+- (void)handleOutput:(NSString *)o mode:(NSString *)mode name:(NSString *)name;
+- (void)runFlow:(NSString *)script name:(NSString *)name;
+- (void)runFlowSteps:(NSArray<NSString *> *)steps index:(NSUInteger)i;
+- (void)openTarget:(NSString *)t;
+- (CItem *)catalogItemNamed:(NSString *)n;
+- (CItem *)snippetItem:(NSDictionary *)sn;
+- (NSArray<CItem *> *)snippetItems:(NSString *)q;
+- (CItem *)itemForKey:(NSString *)key;
+- (NSString *)pinKeyFor:(CItem *)i;
+- (NSArray<NSString *> *)defaultPins;
+- (NSArray<NSString *> *)pinnedKeys;
+- (NSString *)shortLabel:(CItem *)i;
+- (NSArray<CItem *> *)pinnedItems;
+- (BOOL)isPinned:(CItem *)i;
+- (void)setPinnedKeys:(NSArray<NSString *> *)keys;
+- (void)togglePinSelected;
+- (void)unregisterCommandHotKeys;
+- (void)registerCommandHotKeys;
+- (void)runHotKeyCommand:(NSUInteger)idx;
+- (NSArray *)catalogGroups;
+- (NSString *)titleForKey:(NSString *)key;
+@end
+
+@interface CApp (Context)
+- (void)captureContext;
+- (NSArray<CItem *> *)selectionItems;
+- (void)enterQuery:(NSString *)q;
+- (CItem *)transformItem:(NSString *)name;
+- (NSArray<CItem *> *)transformItems:(NSString *)q;
+- (NSArray<CItem *> *)appContextItems;
+- (void)refreshWindowList;
+- (NSArray<CItem *> *)windowItems:(NSString *)q;
+- (CItem *)timeItem:(NSString *)q;
+- (NSArray<CItem *> *)portItems:(NSString *)port;
+- (NSArray<CItem *> *)emojiItems:(NSString *)q;
+- (NSArray<CItem *> *)systemInfoItems;
 @end
 
 @interface CApp (Snapshots)
