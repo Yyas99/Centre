@@ -233,7 +233,7 @@ static NSArray *searchEngines(void) {
     NSImageView *icon = [NSImageView imageViewWithImage:[NSApp applicationIconImage]];
     icon.frame = NSMakeRect(16, 44, 34, 34); icon.imageScaling = NSImageScaleProportionallyUpOrDown; [sc addSubview:icon];
     NSTextField *name = setLabel(@"Centre", 14, NSFontWeightSemibold, nil); name.frame = NSMakeRect(56, 45, 150, 18); [sc addSubview:name];
-    NSTextField *ver = setLabel(@"Version 1.0", 11, NSFontWeightRegular, [NSColor secondaryLabelColor]); ver.frame = NSMakeRect(56, 63, 150, 14); [sc addSubview:ver];
+    NSTextField *ver = setLabel([@"Version " stringByAppendingString:[NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"2.0"], 11, NSFontWeightRegular, [NSColor secondaryLabelColor]); ver.frame = NSMakeRect(56, 63, 150, 14); [sc addSubview:ver];
 
     NSMutableArray *items = [NSMutableArray new];
     NSArray *pages = settingsPages();

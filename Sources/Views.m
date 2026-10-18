@@ -14,14 +14,19 @@
 @implementation CBackdrop
 - (NSView *)hitTest:(NSPoint)p { return nil; }
 - (void)drawRect:(NSRect)r {
-    [(cIsDark(self) ? [NSColor colorWithSRGBRed:0.112 green:0.114 blue:0.126 alpha:0.88] : [NSColor colorWithSRGBRed:0.978 green:0.978 blue:0.982 alpha:0.90]) setFill];
-    NSRectFill(self.bounds);
+    // A cool, slightly lifted top fading to a deeper base: depth without a visible gradient band.
+    NSGradient *g = cIsDark(self)
+        ? [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.135 green:0.142 blue:0.160 alpha:0.86]
+                                        endingColor:[NSColor colorWithSRGBRed:0.098 green:0.102 blue:0.116 alpha:0.90]]
+        : [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.992 green:0.994 blue:0.998 alpha:0.90]
+                                        endingColor:[NSColor colorWithSRGBRed:0.962 green:0.966 blue:0.974 alpha:0.92]];
+    [g drawInRect:self.bounds angle:-90];
 }
 @end
 
 @implementation CHairline
 - (NSView *)hitTest:(NSPoint)p { return nil; }
-- (void)drawRect:(NSRect)r { [[[NSColor labelColor] colorWithAlphaComponent:0.08] setFill]; NSRectFill(self.bounds); }
+- (void)drawRect:(NSRect)r { [[[NSColor labelColor] colorWithAlphaComponent:0.07] setFill]; NSRectFill(self.bounds); }
 @end
 
 @implementation CEdgeView
@@ -29,9 +34,9 @@
 - (void)drawRect:(NSRect)r {
     BOOL dark = cIsDark(self);
     NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:kRadius - 0.5 yRadius:kRadius - 0.5];
-    p.lineWidth = 1; [(dark ? [NSColor colorWithWhite:1 alpha:0.14] : [NSColor colorWithWhite:0 alpha:0.15]) setStroke]; [p stroke];
+    p.lineWidth = 1; [(dark ? [NSColor colorWithWhite:1 alpha:0.12] : [NSColor colorWithWhite:0 alpha:0.12]) setStroke]; [p stroke];
     if (dark) {   // glass: a faint lit line along the top edge, fading out before the corners
-        NSColor *clear = [NSColor colorWithWhite:1 alpha:0], *lit = [NSColor colorWithWhite:1 alpha:0.075];
+        NSColor *clear = [NSColor colorWithWhite:1 alpha:0], *lit = [NSColor colorWithWhite:1 alpha:0.12];
         NSGradient *g = [[NSGradient alloc] initWithColorsAndLocations:clear, 0.0, lit, 0.2, lit, 0.8, clear, 1.0, nil];
         [g drawInRect:NSMakeRect(kRadius * 0.6, self.bounds.size.height - 2, self.bounds.size.width - kRadius * 1.2, 1) angle:0];
     }
@@ -40,7 +45,7 @@
 
 // Quiet band behind the footer hints.
 @implementation CFooterBar
-- (void)drawRect:(NSRect)r { [(cIsDark(self) ? [NSColor colorWithWhite:1 alpha:0.028] : [NSColor colorWithWhite:0 alpha:0.024]) setFill]; NSRectFill(self.bounds); }
+- (void)drawRect:(NSRect)r { [(cIsDark(self) ? [NSColor colorWithWhite:0 alpha:0.12] : [NSColor colorWithWhite:0 alpha:0.022]) setFill]; NSRectFill(self.bounds); }
 @end
 
 // Active-mode token at the right of the search field ("Clipboard", "Files", "youtube.com"…).
@@ -110,8 +115,8 @@
     NSMutableAttributedString *a = [[NSMutableAttributedString alloc] initWithString:t ?: @""
         attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:14 weight:NSFontWeightRegular], NSForegroundColorAttributeName: [NSColor labelColor]}];
     NSString *one = [[sub ?: @"" stringByReplacingOccurrencesOfString:@"\n" withString:@" "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    if (one.length) [a appendAttributedString:[[NSAttributedString alloc] initWithString:[@"    " stringByAppendingString:one]
-        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightRegular], NSForegroundColorAttributeName: [NSColor secondaryLabelColor]}]];
+    if (one.length) [a appendAttributedString:[[NSAttributedString alloc] initWithString:[@"   " stringByAppendingString:one]
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightRegular], NSForegroundColorAttributeName: [[NSColor secondaryLabelColor] colorWithAlphaComponent:0.8]}]];
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.lineBreakMode = NSLineBreakByTruncatingTail;
     [a addAttribute:NSParagraphStyleAttributeName value:ps range:NSMakeRange(0, a.length)];
     _titleLabel.attributedStringValue = a;
@@ -130,16 +135,16 @@
 - (void)layout {
     [super layout];
     CGFloat W = self.bounds.size.width, H = self.bounds.size.height;
-    CGFloat is = _iconSize, tx = 22 + is + 12;
-    _iconView.frame = NSMakeRect(22, floor((H - is) / 2), is, is);
+    CGFloat is = _iconSize, ix = kInset + floor((26 - is) / 2), tx = kInset + 26 + 12;   // text column fixed whatever the icon size
+    _iconView.frame = NSMakeRect(ix, floor((H - is) / 2), is, is);
     _kindLabel.frame = NSMakeRect(W - 26 - 140, floor((H - 16) / 2), 140, 16);
     _titleLabel.frame = NSMakeRect(tx, floor((H - 19) / 2), W - tx - 178, 19);
 }
 - (void)drawRect:(NSRect)r {
     if (_selected) {
         [cSelFill(self) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 8, 1.5) xRadius:9 yRadius:9] fill];
-        NSBezierPath *e = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 8.5, 2) xRadius:8.5 yRadius:8.5];
+        [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 10, 1.5) xRadius:10 yRadius:10] fill];
+        NSBezierPath *e = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 10.5, 2) xRadius:9.5 yRadius:9.5];
         e.lineWidth = 1; [cSelEdge(self) setStroke]; [e stroke];
     }
 }
@@ -153,15 +158,15 @@
     for (NSInteger i = 0; i < n; i++) {
         CItem *it = self.items[i];
         NSView *cell = [[NSView alloc] initWithFrame:NSMakeRect(kGridX + i * kCellW, 0, kCellW, kCellH)];
-        NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((kCellW - 48) / 2, kCellH - 48 - 9, 48, 48)];
+        NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((kCellW - 50) / 2, kCellH - 50 - 8, 50, 50)];
         iv.imageScaling = NSImageScaleProportionallyUpOrDown;
         NSImage *img = self.iconFor ? self.iconFor(it) : nil;
         iv.image = img; if (img.template) iv.contentTintColor = [NSColor secondaryLabelColor];
         NSString *t = (self.showShortcuts && i < 9) ? [NSString stringWithFormat:@"\u2318%ld", (long)i + 1] : (it.title ?: @"");
         NSTextField *lbl = [NSTextField labelWithString:t];
-        lbl.font = [NSFont systemFontOfSize:11.5 weight:i == self.selected ? NSFontWeightMedium : NSFontWeightRegular]; lbl.alignment = NSTextAlignmentCenter;
+        lbl.font = [NSFont systemFontOfSize:11 weight:NSFontWeightMedium]; lbl.alignment = NSTextAlignmentCenter;
         lbl.textColor = i == self.selected ? [NSColor labelColor] : [NSColor secondaryLabelColor];
-        lbl.lineBreakMode = NSLineBreakByTruncatingTail; lbl.frame = NSMakeRect(6, 9, kCellW - 12, 16);
+        lbl.lineBreakMode = NSLineBreakByTruncatingTail; lbl.frame = NSMakeRect(5, 8, kCellW - 10, 15);
         [cell addSubview:iv]; [cell addSubview:lbl];
         [self addSubview:cell];
     }
@@ -173,7 +178,6 @@
     for (NSView *cell in self.subviews) {
         for (NSView *v in cell.subviews) if ([v isKindOfClass:[NSTextField class]]) {
             ((NSTextField *)v).textColor = i == s ? [NSColor labelColor] : [NSColor secondaryLabelColor];
-            ((NSTextField *)v).font = [NSFont systemFontOfSize:11.5 weight:i == s ? NSFontWeightMedium : NSFontWeightRegular];
         }
         i++;
     }
@@ -183,8 +187,8 @@
     if (_selected >= 0 && _selected < (NSInteger)self.items.count) {
         NSRect b = NSMakeRect(kGridX + _selected * kCellW + 4, 1, kCellW - 8, kCellH - 2);
         [cSelFill(self) setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:b xRadius:14 yRadius:14] fill];
-        NSBezierPath *e = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:13.5 yRadius:13.5];
+        [[NSBezierPath bezierPathWithRoundedRect:b xRadius:16 yRadius:16] fill];
+        NSBezierPath *e = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:15.5 yRadius:15.5];
         e.lineWidth = 1; [cSelEdge(self) setStroke]; [e stroke];
     }
 }
@@ -210,14 +214,14 @@
 @implementation CQuickStrip
 - (NSDictionary *)attrs:(BOOL)sel {
     return @{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium],
-             NSForegroundColorAttributeName: sel ? [NSColor labelColor] : [NSColor secondaryLabelColor]};
+             NSForegroundColorAttributeName: sel ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.78]};
 }
 - (NSArray<NSValue *> *)pillRects {
     NSMutableArray *r = [NSMutableArray new];
-    CGFloat x = kGridX + 4, H = self.bounds.size.height, h = 30;
+    CGFloat x = kInset, H = self.bounds.size.height, h = 32;
     for (CItem *it in self.items) {
-        CGFloat w = 9 + 18 + 7 + ceil([it.title sizeWithAttributes:[self attrs:NO]].width) + 13;
-        if (x + w > self.bounds.size.width - kGridX) break;          // never overflow the panel
+        CGFloat w = 12 + 16 + 7 + ceil([it.title sizeWithAttributes:[self attrs:NO]].width) + 14;
+        if (x + w > self.bounds.size.width - kInset) break;          // never overflow the panel
         [r addObject:[NSValue valueWithRect:NSMakeRect(x, floor((H - h) / 2), w, h)]];
         x += w + 8;
     }
@@ -231,11 +235,16 @@
     for (NSUInteger i = 0; i < rects.count; i++) {
         NSRect b = [rects[i] rectValue]; BOOL sel = (NSInteger)i == self.selected;
         NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:(b.size.height - 1) / 2 yRadius:(b.size.height - 1) / 2];
-        [(sel ? cSelFill(self) : (dark ? [NSColor colorWithWhite:1 alpha:0.04] : [NSColor colorWithWhite:0 alpha:0.03])) setFill]; [p fill];
-        p.lineWidth = 1; [(sel ? (dark ? [NSColor colorWithWhite:1 alpha:0.13] : [NSColor colorWithWhite:0 alpha:0.10]) : cSelEdge(self)) setStroke]; [p stroke];
+        [(sel ? cSelFill(self) : (dark ? [NSColor colorWithWhite:1 alpha:0.055] : [NSColor colorWithWhite:0 alpha:0.04])) setFill]; [p fill];
+        if (sel) { p.lineWidth = 1; [cSelEdge(self) setStroke]; [p stroke]; }
         CItem *it = self.items[i];
-        NSRect ir = NSMakeRect(b.origin.x + 9, floor(NSMidY(b) - 9), 18, 18);
-        [tileImage(it.symbol, it.kind) drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+        NSArray<NSColor *> *tc = tileColors(it.kind);
+        NSColor *tint = [it.kind isEqualToString:@"System"] || [it.kind isEqualToString:@"Centre"] ? [NSColor secondaryLabelColor] : (dark ? tc[0] : tc[1]);
+        NSImage *g = tintedSymbol(it.symbol, 12, tint);
+        NSSize gs = g.size; CGFloat k = MIN(1.0, 16.0 / MAX(MAX(gs.width, gs.height), 1));
+        NSRect ir = NSMakeRect(b.origin.x + 12 + (16 - gs.width * k) / 2, floor(NSMidY(b) - gs.height * k / 2), gs.width * k, gs.height * k);
+        [g drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+        ir = NSMakeRect(b.origin.x + 12, 0, 16, 0);
         NSDictionary *a = [self attrs:sel]; NSSize ts = [it.title sizeWithAttributes:a];
         [it.title drawAtPoint:NSMakePoint(NSMaxX(ir) + 7, NSMidY(b) - ts.height / 2) withAttributes:a];
     }
@@ -270,9 +279,8 @@
     CGFloat y = 0, W = self.bounds.size.width; NSInteger idx = self.base;
     for (id e in self.entries) {
         if ([e isKindOfClass:[NSString class]]) {
-            NSTextField *h = [NSTextField labelWithString:e];
-            h.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold]; h.textColor = [NSColor secondaryLabelColor];
-            h.frame = NSMakeRect(kGridX + 6, y + 8, 300, 15);
+            NSTextField *h = [NSTextField labelWithAttributedString:sectionTitle(e)];
+            h.frame = NSMakeRect(kInset, y + 13, 300, 14);
             [self addSubview:h]; y += kHomeHeadH;
         } else {
             CItem *it = e;
@@ -340,7 +348,7 @@
 }
 - (void)tap:(NSButton *)b { if (self.onCommand) self.onCommand((int)b.tag); }
 - (void)setPlaying:(BOOL)p { self.playB.image = symSize(p ? @"pause.fill" : @"play.fill", 19); }
-- (NSRect)card { return NSMakeRect(12, 6, self.bounds.size.width - 24, self.bounds.size.height - 12); }
+- (NSRect)card { return NSMakeRect(10, 6, self.bounds.size.width - 20, self.bounds.size.height - 12); }
 // Track rect between the two time labels; the hit area is taller than the drawn bar.
 - (NSRect)barRect { return NSMakeRect(NSMaxX(self.elapsedL.frame) + 6, NSMinY([self card]) + 18, MAX(0, NSMinX(self.remainL.frame) - NSMaxX(self.elapsedL.frame) - 12), 4); }
 - (NSRect)barHitRect { return NSInsetRect([self barRect], -4, -8); }

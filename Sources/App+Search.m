@@ -253,6 +253,8 @@
     else {
         for (CItem *i in self.items) if (![i.kind isEqualToString:@"File"] && ![i.kind isEqualToString:@"Web"]) [all addObject:i];
         NSInteger room = MAX(0, 8 - (NSInteger)all.count); room = MIN(room, 4);
+        NSMutableSet *shown = [NSMutableSet new]; for (CItem *i in all) if (i.path) [shown addObject:i.path];
+        files = [files filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(CItem *f, id _) { return ![shown containsObject:f.path]; }]];
         NSInteger keep = MIN((NSInteger)files.count, MAX(room, 2));
         [all addObjectsFromArray:[files subarrayWithRange:NSMakeRange(0, keep)]];
         for (CItem *i in self.items) if ([i.kind isEqualToString:@"Web"]) [all addObject:i];
@@ -260,6 +262,75 @@
     if (all.count > kMaxRows) all = [[all subarrayWithRange:NSMakeRange(0, kMaxRows)] mutableCopy];
     self.items = all; self.selected = MIN(self.selected, MAX(0, (NSInteger)all.count - 1));
     [self reloadTable];
+}
+
+#pragma mark Folders and paths
+
+- (CItem *)fileItem:(NSString *)path folder:(BOOL)folder score:(double)score {
+    NSString *tilde = [path stringByAbbreviatingWithTildeInPath];
+    CItem *i = [CItem new];
+    i.title = [path isEqualToString:@"/"] ? @"Macintosh HD" : [[NSFileManager defaultManager] displayNameAtPath:path];
+    i.subtitle = [tilde.stringByDeletingLastPathComponent isEqualToString:@""] ? @"/" : tilde.stringByDeletingLastPathComponent;
+    i.kind = folder ? @"Folder" : @"File"; i.path = path; i.score = score;
+    i.completion = folder ? ([tilde hasSuffix:@"/"] ? tilde : [tilde stringByAppendingString:@"/"]) : tilde;
+    __weak CApp *ws = self;
+    i.action = ^{ [ws recordUse:path]; [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:path]]; };
+    i.altAction = ^{ [[NSWorkspace sharedWorkspace] selectFile:path inFileViewerRootedAtPath:@""]; };
+    i.altHint = @"⌘↩ Reveal in Finder";
+    return i;
+}
+
+// "/documents", "~/doc/rep", "/applications/saf": the folder or file, never a web search. Tab completes like a shell.
+- (NSArray<CItem *> *)pathItems:(NSString *)q {
+    NSDictionary *res = pathCompletions(q, NSHomeDirectory(), kMaxRows);
+    NSMutableArray *r = [NSMutableArray new];
+    NSString *dir = res[@"dir"];
+    BOOL browsing = [q hasSuffix:@"/"] || [q isEqualToString:@"~"];
+    if (dir && browsing) {
+        CItem *here = [self fileItem:dir folder:YES score:1000];
+        here.title = [@"Open " stringByAppendingString:here.title]; here.verb = @"Open Folder";
+        [r addObject:here];
+    }
+    for (NSDictionary *f in res[@"items"]) {
+        CItem *i = [self fileItem:f[@"path"] folder:[f[@"dir"] boolValue] score:[f[@"score"] doubleValue]];
+        [r addObject:i];
+    }
+    if (!r.count) {
+        NSString *where = dir ? [dir stringByAbbreviatingWithTildeInPath] : nil;
+        CItem *none = mk(where ? [NSString stringWithFormat:@"Nothing matching in %@", where] : @"No folder by that name",
+                         @"Tab completes names · ~ is your home folder", @"Folder", @"folder", ^{});
+        if (dir) none.action = ^{ [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dir]]; };
+        [r addObject:none];
+    }
+    if (r.count > kMaxRows) [r removeObjectsInRange:NSMakeRange(kMaxRows, r.count - kMaxRows)];
+    return r;
+}
+
+// Standard folders and everything visible in the home folder, so "documents" or "downloads" opens the folder.
+- (NSArray<CItem *> *)folderItemsFor:(NSString *)q {
+    static NSArray<NSString *> *cached; static NSDate *stamp;
+    if (!cached || -stamp.timeIntervalSinceNow > 30) {
+        NSString *home = NSHomeDirectory(); NSFileManager *fm = [NSFileManager defaultManager];
+        NSMutableOrderedSet *paths = [NSMutableOrderedSet orderedSetWithObjects:home, @"/Applications", nil];
+        for (NSString *n in [fm contentsOfDirectoryAtPath:home error:nil]) {
+            BOOL d = NO; NSString *p = [home stringByAppendingPathComponent:n];
+            if (![n hasPrefix:@"."] && [fm fileExistsAtPath:p isDirectory:&d] && d) [paths addObject:p];
+        }
+        NSString *icloud = [home stringByAppendingPathComponent:@"Library/Mobile Documents/com~apple~CloudDocs"];
+        if ([fm fileExistsAtPath:icloud]) [paths addObject:icloud];
+        cached = paths.array; stamp = [NSDate date];
+    }
+    NSMutableArray *r = [NSMutableArray new];
+    for (NSString *p in cached) {
+        NSString *name = [p isEqualToString:NSHomeDirectory()] ? @"Home" : [p hasSuffix:@"CloudDocs"] ? @"iCloud Drive" : p.lastPathComponent;
+        double s = fuzzyScore(q, name);
+        if (s < 0 && [p isEqualToString:NSHomeDirectory()]) s = fuzzyScore(q, NSUserName());
+        if (s < 0) continue;
+        CItem *i = [self fileItem:p folder:YES score:s - 6 + [self usageBoost:p]];
+        i.title = name;
+        [r addObject:i];
+    }
+    return r;
 }
 
 #pragma mark Query → items
@@ -292,6 +363,9 @@
         self.modeLabel = @"Files";
         [out addObject:mk([NSString stringWithFormat:@"Searching files for “%@”…", rest], nil, @"Files", @"doc", ^{})];
         [self startFileSearch:rest onlyFiles:YES];
+    } else if ([q hasPrefix:@"/"] || [q hasPrefix:@"~"]) {
+        self.modeLabel = @"Folders";
+        [out addObjectsFromArray:[self pathItems:q]];
     } else if ([q hasPrefix:@">"]) {
         self.modeLabel = @"Shell";
         NSString *cmd = [[q substringFromIndex:1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
@@ -326,6 +400,7 @@
         NSMutableArray *general = [NSMutableArray new];
         [general addObjectsFromArray:[self appItemsFor:q]];
         [general addObjectsFromArray:[self linkItemsFor:q]];
+        [general addObjectsFromArray:[self folderItemsFor:q]];
         for (CItem *c in [self systemCommands]) {
             double s = fuzzyScore(q, c.title);
             if (c.keywords.length) {                      // synonyms match too, a little below an exact title match

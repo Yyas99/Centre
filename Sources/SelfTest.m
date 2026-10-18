@@ -56,6 +56,24 @@ int runSelfTests(void) {
     check(parseDuration(@"45min") == 2700, @"duration: 45min");
     check(parseDuration(@"tea") == 0, @"duration: not a duration");
 
+    // path completion, against a throwaway tree standing in for the home folder
+    NSString *home = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"centre-selftest-%d", getpid()]];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    [fm createDirectoryAtPath:[home stringByAppendingPathComponent:@"Documents/Projects"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [fm createDirectoryAtPath:[home stringByAppendingPathComponent:@"Downloads"] withIntermediateDirectories:YES attributes:nil error:nil];
+    [@"x" writeToFile:[home stringByAppendingPathComponent:@"Documents/report.txt"] atomically:NO encoding:NSUTF8StringEncoding error:nil];
+    NSString *(^firstPath)(NSString *) = ^NSString *(NSString *q) { return [pathCompletions(q, home, 8)[@"items"] firstObject][@"path"]; };
+    NSString *docs = [home stringByAppendingPathComponent:@"Documents"];
+    check([firstPath(@"/documents") isEqualToString:docs], @"paths: /documents finds the home Documents folder");
+    check([firstPath(@"~/doc") isEqualToString:docs], @"paths: ~/doc completes to Documents");
+    check([firstPath(@"~/documents/rep") isEqualToString:[docs stringByAppendingPathComponent:@"report.txt"]], @"paths: any-case folder, file prefix");
+    check([firstPath(@"~/Documents/") isEqualToString:[docs stringByAppendingPathComponent:@"Projects"]], @"paths: folders list before files");
+    check([firstPath(@"/doc/proj") isEqualToString:[docs stringByAppendingPathComponent:@"Projects"]], @"paths: prefix folder steps");
+    check([pathCompletions(@"~/Documents/", home, 8)[@"dir"] isEqualToString:docs], @"paths: listed folder is reported");
+    check([firstPath(@"/applications") isEqualToString:@"/Applications"], @"paths: real root folders still win");
+    check([pathCompletions(@"documents", home, 8)[@"items"] count] == 0, @"paths: plain words are not paths");
+    [fm removeItemAtPath:home error:nil];
+
     printf("Self-test: %d/%d passed\n", checks - failures, checks);
     return failures;
 }

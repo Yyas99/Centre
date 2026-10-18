@@ -61,6 +61,9 @@ if [ "$1" = "build" ] || stale; then
     codesign -s "${SIGN_ID:--}" -f --identifier com.y.centre "$APP" >/dev/null 2>&1 \
       || codesign -s - -f --identifier com.y.centre "$APP" >/dev/null 2>&1 || true
   fi
+  # Re-register with Launch Services so Finder, the Dock and notifications drop any cached icon.
+  LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+  [ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
   echo "Built $APP"
 fi
 

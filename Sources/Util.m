@@ -416,3 +416,81 @@ NSTimeInterval parseDuration(NSString *s) {
     for (NSUInteger g = 1; g <= 3; g++) if ([m rangeAtIndex:g].location != NSNotFound) total += [[t substringWithRange:[m rangeAtIndex:g]] doubleValue] * mult[g - 1];
     return total;
 }
+
+// One path step, matched the way people type it: exact name, then any case, then a unique-enough prefix
+// ("doc" → Documents). Listing first keeps the folder's real capitalisation on case-insensitive disks.
+static NSString *stepInto(NSString *dir, NSString *c) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *names = [[fm contentsOfDirectoryAtPath:dir error:nil] sortedArrayUsingSelector:@selector(localizedCaseInsensitiveCompare:)];
+    NSString *lc = c.lowercaseString, *hit = nil;
+    if ([names containsObject:c]) hit = c;
+    if (!hit) for (NSString *n in names) if ([n.lowercaseString isEqualToString:lc]) { hit = n; break; }
+    if (!hit) for (NSString *n in names) {
+        BOOL d = NO;
+        if (![n hasPrefix:@"."] && [n.lowercaseString hasPrefix:lc] && [fm fileExistsAtPath:[dir stringByAppendingPathComponent:n] isDirectory:&d] && d) { hit = n; break; }
+    }
+    if (!hit) hit = c;                                    // unlistable folder (no permission yet): trust the typed name
+    NSString *next = [dir stringByAppendingPathComponent:hit]; BOOL d = NO;
+    return [fm fileExistsAtPath:next isDirectory:&d] && d ? next : nil;
+}
+
+static NSString *resolveDir(NSString *base, NSArray<NSString *> *comps) {
+    NSString *cur = base;
+    for (NSString *c in comps) {
+        if (!c.length || [c isEqualToString:@"."]) continue;
+        if ([c isEqualToString:@".."]) { cur = cur.stringByDeletingLastPathComponent; continue; }
+        cur = stepInto(cur, c); if (!cur) return nil;
+    }
+    return cur;
+}
+
+static NSArray<NSDictionary *> *listMatches(NSString *dir, NSString *partial, double penalty) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *out = [NSMutableArray new]; NSUInteger scanned = 0;
+    for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:nil]) {
+        if (++scanned > 4000) break;
+        if ([n hasPrefix:@"."] && ![partial hasPrefix:@"."]) continue;
+        if ([n isEqualToString:@"Icon\r"]) continue;
+        double s = partial.length ? fuzzyScore(partial, n) : 0; if (s < 0) continue;
+        NSString *p = [dir stringByAppendingPathComponent:n]; BOOL d = NO;
+        [fm fileExistsAtPath:p isDirectory:&d];
+        BOOL folder = d && ![[NSWorkspace sharedWorkspace] isFilePackageAtPath:p];
+        [out addObject:@{@"path": p, @"dir": @(folder), @"score": @(s + (folder ? 4 : 0) - penalty)}];
+    }
+    return out;
+}
+
+// Path completion for "/documents", "~/doc/rep", "/applications/saf". A "/" path that doesn't match anything
+// strong from the disk root is also tried from the home folder, because people type "/Documents" meaning theirs.
+// Returns @{dir: the folder being listed (or nil), items: [{path, dir, score}] best first}.
+NSDictionary *pathCompletions(NSString *q, NSString *home, NSUInteger limit) {
+    if (!([q hasPrefix:@"/"] || [q hasPrefix:@"~"])) return @{@"items": @[]};
+    BOOL tilde = [q hasPrefix:@"~"];
+    NSString *rel = tilde ? [q substringFromIndex:1] : q;
+    NSMutableArray<NSString *> *comps = [[rel componentsSeparatedByString:@"/"] mutableCopy];
+    NSString *partial = @"";
+    if (rel.length && ![rel hasSuffix:@"/"]) { partial = comps.lastObject; [comps removeLastObject]; }
+    NSArray *bases = tilde ? @[home] : @[@"/", home];
+    NSString *shown = nil; NSMutableArray *items = [NSMutableArray new];
+    for (NSUInteger b = 0; b < bases.count; b++) {
+        NSString *dir = resolveDir(bases[b], comps); if (!dir) continue;
+        NSArray *found = listMatches(dir, partial, b);
+        double best = -1; for (NSDictionary *f in found) best = MAX(best, [f[@"score"] doubleValue]);
+        if (!shown) shown = dir;
+        [items addObjectsFromArray:found];
+        // The root answered well (or the user is browsing it): no need to look in home.
+        if (b == 0 && !tilde && (best >= 100 || (!partial.length && comps.count))) break;
+        if (b == 0 && !tilde && !partial.length && !comps.count) break;   // bare "/" lists the disk root
+    }
+    double top = -1; for (NSDictionary *f in items) top = MAX(top, [f[@"score"] doubleValue]);
+    if (top >= 100) [items filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *f, id _) { return [f[@"score"] doubleValue] >= 60; }]];
+    [items sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+        double x = [a[@"score"] doubleValue], y = [b[@"score"] doubleValue];
+        if (x != y) return x > y ? NSOrderedAscending : NSOrderedDescending;
+        return [[a[@"path"] lastPathComponent] localizedCaseInsensitiveCompare:[b[@"path"] lastPathComponent]];
+    }];
+    if (items.count > limit) [items removeObjectsInRange:NSMakeRange(limit, items.count - limit)];
+    if (top >= 100 && shown && items.count && ![[items.firstObject[@"path"] stringByDeletingLastPathComponent] isEqualToString:shown])
+        shown = [items.firstObject[@"path"] stringByDeletingLastPathComponent];
+    return shown ? @{@"dir": shown, @"items": items} : @{@"items": items};
+}

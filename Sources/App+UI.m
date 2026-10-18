@@ -33,13 +33,13 @@
     NSImageView *si = [[NSImageView alloc] initWithFrame:NSMakeRect(22, 0, 18, 18)];
     NSImage *mg = [NSImage imageWithSystemSymbolName:@"magnifyingglass" accessibilityDescription:nil];
     si.image = [mg imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:16 weight:NSFontWeightMedium]];
-    si.contentTintColor = [NSColor tertiaryLabelColor]; si.imageScaling = NSImageScaleProportionallyUpOrDown;
+    si.contentTintColor = [NSColor secondaryLabelColor]; si.imageScaling = NSImageScaleProportionallyUpOrDown;
     [fx addSubview:si]; self.searchIcon = si;
 
     CField *t = [[CField alloc] initWithFrame:NSMakeRect(54, 0, kW - 54 - 22, 28)];
-    t.font = [NSFont systemFontOfSize:20 weight:NSFontWeightRegular];
+    t.font = [NSFont systemFontOfSize:21 weight:NSFontWeightRegular];
     t.bezeled = NO; t.bordered = NO; t.drawsBackground = NO; t.focusRingType = NSFocusRingTypeNone;
-    t.placeholderAttributedString = [[NSAttributedString alloc] initWithString:@"Search apps, commands and files…" attributes:@{NSFontAttributeName: t.font, NSForegroundColorAttributeName: [NSColor tertiaryLabelColor]}];
+    t.placeholderAttributedString = [[NSAttributedString alloc] initWithString:@"Search apps, files and commands" attributes:@{NSFontAttributeName: t.font, NSForegroundColorAttributeName: [NSColor tertiaryLabelColor]}];
     t.delegate = self;
     [fx addSubview:t]; self.field = t;
     CChip *chip = [[CChip alloc] initWithFrame:NSZeroRect]; chip.hidden = YES;
@@ -51,8 +51,7 @@
     CHairline *sep = [[CHairline alloc] initWithFrame:NSMakeRect(0, 0, kW, 1)];
     [fx addSubview:sep]; self.separator = sep;
 
-    NSTextField *gt = [NSTextField labelWithString:@"Most Used"];
-    gt.font = [NSFont systemFontOfSize:11.5 weight:NSFontWeightSemibold]; gt.textColor = [NSColor secondaryLabelColor];
+    NSTextField *gt = [NSTextField labelWithAttributedString:sectionTitle(@"Most Used")];
     [fx addSubview:gt]; self.gridTitle = gt;
     CGridView *grid = [[CGridView alloc] initWithFrame:NSMakeRect(0, 0, kW, kCellH)];
     __weak CApp *ws = self;
@@ -81,10 +80,10 @@
     CHairline *fl = [[CHairline alloc] initWithFrame:NSMakeRect(0, kFooterH - 1, kW, 1)];
     [footer addSubview:fl];
     NSImageView *fi = [NSImageView imageViewWithImage:[NSApp applicationIconImage]];
-    fi.frame = NSMakeRect(18, floor((kFooterH - 18) / 2), 18, 18); fi.imageScaling = NSImageScaleProportionallyUpOrDown;
+    fi.frame = NSMakeRect(kInset - 1, floor((kFooterH - 18) / 2), 18, 18); fi.imageScaling = NSImageScaleProportionallyUpOrDown;
     NSTextField *fL = [NSTextField labelWithString:@"Centre"];
-    fL.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]; fL.textColor = [NSColor secondaryLabelColor];
-    fL.frame = NSMakeRect(42, floor((kFooterH - 16) / 2), 200, 16);
+    fL.font = [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]; fL.textColor = [NSColor tertiaryLabelColor];
+    fL.frame = NSMakeRect(kInset + 24, floor((kFooterH - 16) / 2), 200, 16);
     NSTextField *fR = [NSTextField labelWithString:@""]; fR.hidden = YES;
     CKeyHints *hints = [[CKeyHints alloc] initWithFrame:NSMakeRect(kW - 18 - 480, 0, 480, kFooterH - 1)];
     for (NSView *v in @[fi, fL, fR, hints]) [footer addSubview:v];
@@ -170,7 +169,7 @@
     if (home) {
         CGFloat y = sy - mediaH;
         if (appsH > 0) {
-            self.gridTitle.frame = NSMakeRect(kGridX + 6, y - 28, 200, 15);
+            self.gridTitle.frame = NSMakeRect(kInset, y - 30, 200, 14);
             self.grid.frame = NSMakeRect(0, y - 32 - kCellH, kW, kCellH);
             y -= appsH;
         }
@@ -183,7 +182,7 @@
     NSDictionary *verbs = @{ @"Application": @"Open Application", @"Recent": @"Open Application", @"Calculator": @"Copy Answer", @"Web": @"Search",
                              @"URL": @"Open Link", @"Link": @"Open Link", @"Clipboard": @"Paste", @"File": @"Open File", @"Process": @"Quit App",
                              @"Shell": @"Run", @"System Settings": @"Open Settings", @"Media": @"Control Playback", @"Password": @"Copy Password",
-                             @"Dictionary": @"Open in Dictionary", @"Timer": @"Start Timer" };
+                             @"Dictionary": @"Open in Dictionary", @"Timer": @"Start Timer", @"Folder": @"Open Folder" };
     NSString *verb = sel ? (sel.verb ?: verbs[sel.kind ?: @""] ?: @"Run Command") : @"Open";
     if (sel && sel == self.armedItem) verb = @"Confirm";
     NSMutableArray *h = [NSMutableArray arrayWithObject:@[verb, @"↩"]];

@@ -27,15 +27,17 @@ typedef void (^CAction)(void);
 @property (nonatomic, copy) NSString *confirm;   // set for irreversible commands: first ↩ arms, second ↩ runs
 @property (nonatomic, copy) NSString *keywords;  // other words people type for this command ("empty" for Clear Clipboard)
 @property (nonatomic, copy) NSString *verb;      // footer label for ↩ when the kind's default doesn't fit ("Cancel Timer")
+@property (nonatomic, copy) NSString *completion; // what Tab puts in the search field ("~/Documents/")
 @end
 
 CItem *mk(NSString *title, NSString *sub, NSString *kind, NSString *symbol, CAction action);
 
 #pragma mark - Layout constants
 
-static const CGFloat kRadius = 16;                                   // panel corner radius
+static const CGFloat kRadius = 18;                                   // panel corner radius
 static const CGFloat kW = 720, kSearchH = 62, kRowH = 44, kGridH = 124, kFooterH = 40;
-static const CGFloat kCellW = 84, kCellH = 84, kGridX = 24, kQuickH = 46, kHomeRowH = 34, kHomeHeadH = 26;
+static const CGFloat kCellW = 84, kCellH = 84, kGridX = 18, kQuickH = 48, kHomeRowH = 34, kHomeHeadH = 32;
+static const CGFloat kInset = 22;                                    // one left edge for headers, icons and pills
 static const CGFloat kMediaH = 92;
 static const NSInteger kMaxRows = 9;
 
@@ -71,6 +73,7 @@ NSString *formatNumber(double v);
 BOOL evaluateMath(NSString *q, double *out);
 NSString *convertUnits(NSString *q, double *out);
 NSTimeInterval parseDuration(NSString *s);
+NSDictionary *pathCompletions(NSString *q, NSString *home, NSUInteger limit);
 
 #pragma mark - Theme and HUD (Theme.m)
 
@@ -81,6 +84,8 @@ NSColor *cSelEdge(NSView *v);
 NSColor *rgb(CGFloat r, CGFloat g, CGFloat b);
 NSArray<NSColor *> *tileColors(NSString *kind);
 NSImage *tileImage(NSString *symbol, NSString *kind);
+NSAttributedString *sectionTitle(NSString *t);
+NSImage *tintedSymbol(NSString *symbol, CGFloat pt, NSColor *color);
 NSPanel *prepareHUD(NSString *text, NSString *symbol);
 void showHUD(NSString *text, NSString *symbol);
 void showHUDFor(NSString *text, NSString *symbol, NSTimeInterval seconds);

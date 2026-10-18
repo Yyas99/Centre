@@ -109,6 +109,9 @@
 @end
 
 @interface CApp (Search)
+- (CItem *)fileItem:(NSString *)path folder:(BOOL)folder score:(double)score;
+- (NSArray<CItem *> *)pathItems:(NSString *)q;
+- (NSArray<CItem *> *)folderItemsFor:(NSString *)q;
 - (NSArray<CItem *> *)systemCommands;
 - (NSArray<CItem *> *)appItemsFor:(NSString *)q;
 - (CItem *)appItem:(CItem *)a score:(double)score;

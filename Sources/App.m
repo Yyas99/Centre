@@ -171,7 +171,9 @@
     if (sel == @selector(cancelOperation:) || sel == @selector(complete:)) { [self hide]; return YES; }
     if (sel == @selector(insertTab:)) {
         if (self.selected < (NSInteger)self.items.count) { CItem *i = self.items[self.selected];
-            if ([i.kind isEqualToString:@"Application"] || [i.kind isEqualToString:@"Recent"]) { self.field.stringValue = i.title; [tv setSelectedRange:NSMakeRange(i.title.length, 0)]; [self refresh]; } }
+            NSString *fill = i.completion.length ? i.completion
+                           : ([i.kind isEqualToString:@"Application"] || [i.kind isEqualToString:@"Recent"]) ? i.title : nil;
+            if (fill) { self.field.stringValue = fill; [tv setSelectedRange:NSMakeRange(fill.length, 0)]; [self refresh]; } }
         return YES;
     }
     return NO;

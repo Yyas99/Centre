@@ -17,9 +17,25 @@ NSColor *cAccent(void) {
 BOOL cIsDark(NSView *v) {
     return [v.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
 }
-// Selection fill + hairline shared by result rows, grid cells and the settings sidebar.
-NSColor *cSelFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithWhite:1 alpha:0.095] : [NSColor colorWithWhite:0 alpha:0.065]; }
-NSColor *cSelEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithWhite:1 alpha:0.055] : [NSColor colorWithWhite:0 alpha:0.04]; }
+// Selection fill + hairline shared by result rows, grid cells and the settings sidebar: neutral glass with
+// a breath of the ice accent, so the selection reads as "lit" rather than as a grey box.
+NSColor *cSelFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.62 green:0.80 blue:1.00 alpha:0.115] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.085]; }
+NSColor *cSelEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.70 green:0.86 blue:1.00 alpha:0.10] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.10]; }
+
+// Section headers: small, tracked capitals, quieter than content so the eye lands on items first.
+NSAttributedString *sectionTitle(NSString *t) {
+    return [[NSAttributedString alloc] initWithString:(t ?: @"").uppercaseString attributes:@{
+        NSFontAttributeName: [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: [[NSColor labelColor] colorWithAlphaComponent:0.42], NSKernAttributeName: @(0.7)}];
+}
+// An SF Symbol filled with one colour (template images can't be tinted when drawn directly).
+NSImage *tintedSymbol(NSString *symbol, CGFloat pt, NSColor *color) {
+    NSImage *g = [[NSImage imageWithSystemSymbolName:symbol ?: @"circle" accessibilityDescription:nil]
+                  imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:pt weight:NSFontWeightSemibold]];
+    if (!g) return nil;
+    return [NSImage imageWithSize:g.size flipped:NO drawingHandler:^BOOL(NSRect r) {
+        [g drawInRect:r]; [color set]; NSRectFillUsingOperation(r, NSCompositingOperationSourceAtop); return YES; }];
+}
 
 NSColor *rgb(CGFloat r, CGFloat g, CGFloat b) { return [NSColor colorWithSRGBRed:r green:g blue:b alpha:1]; }
 // System Settings–style tile colours (top, bottom) per result kind.

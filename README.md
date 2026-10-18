@@ -52,7 +52,7 @@
 | `⌘ 1` … `⌘ 9` | Run an item by position (hold `⌘` to see the numbers) |
 | `⌘ P` · `⌘ [` · `⌘ ]` | Play / pause · previous · next |
 | `⌘ ,` | Settings |
-| `Tab` | Complete an app name |
+| `Tab` | Complete an app name or a path |
 
 ## Prefixes
 
@@ -60,6 +60,7 @@
 | --- | --- |
 | `clip` | Search clipboard history |
 | `f report` | Search files |
+| `/documents` · `~/doc/rep` | Open folders and files by path, any case; `Tab` completes like a shell |
 | `pw 32` | Generate passwords of a given length |
 | `quit` · `kill` | Quit or force-quit running apps |
 | `> command` | Run in Terminal (`⌘↩` runs silently and copies the output) |
