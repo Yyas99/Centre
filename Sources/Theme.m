@@ -22,11 +22,22 @@ BOOL cIsDark(NSView *v) {
 NSColor *cSelFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.62 green:0.80 blue:1.00 alpha:0.115] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.085]; }
 NSColor *cSelEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.70 green:0.86 blue:1.00 alpha:0.10] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.10]; }
 
+// Explicitly dynamic (an alpha-adjusted labelColor can freeze to one appearance inside attributed strings).
+static NSColor *sectionColor(void) {
+    static NSColor *c; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        c = [NSColor colorWithName:@"CentreSection" dynamicProvider:^NSColor *(NSAppearance *ap) {
+            BOOL dark = [ap bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
+            return dark ? [NSColor colorWithWhite:1 alpha:0.42] : [NSColor colorWithWhite:0 alpha:0.45];
+        }];
+    });
+    return c;
+}
 // Section headers: small, tracked capitals, quieter than content so the eye lands on items first.
 NSAttributedString *sectionTitle(NSString *t) {
     return [[NSAttributedString alloc] initWithString:(t ?: @"").uppercaseString attributes:@{
         NSFontAttributeName: [NSFont systemFontOfSize:10.5 weight:NSFontWeightSemibold],
-        NSForegroundColorAttributeName: [[NSColor labelColor] colorWithAlphaComponent:0.42], NSKernAttributeName: @(0.7)}];
+        NSForegroundColorAttributeName: sectionColor(), NSKernAttributeName: @(0.7)}];
 }
 // An SF Symbol filled with one colour (template images can't be tinted when drawn directly).
 NSImage *tintedSymbol(NSString *symbol, CGFloat pt, NSColor *color) {

@@ -9,25 +9,41 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
-// Rounded, hairline-bordered group box. Colors resolve per appearance at draw time.
+// Settings tokens, shared with the launcher: the same cool surfaces, ice accent and tracked section labels.
+static NSColor *setSurface(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.112 green:0.117 blue:0.132 alpha:1] : [NSColor colorWithSRGBRed:0.955 green:0.958 blue:0.967 alpha:1]; }
+static NSColor *setCardFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.152 green:0.158 blue:0.176 alpha:1] : [NSColor whiteColor]; }
+static NSColor *setCardEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithWhite:1 alpha:0.075] : [NSColor colorWithWhite:0 alpha:0.075]; }
+static NSColor *setDivider(NSView *v) { return cIsDark(v) ? [NSColor colorWithWhite:1 alpha:0.065] : [NSColor colorWithWhite:0 alpha:0.07]; }
+
+// The content side of the window: one calm surface instead of the default grey.
+@interface CSetSurface : NSView @end
+@implementation CSetSurface
+- (void)drawRect:(NSRect)r { [setSurface(self) setFill]; NSRectFill(self.bounds); }   // bounds, not the dirty rect: views don't clip to bounds on macOS 14+
+@end
+
+// Grouped card, System Settings style: a lifted surface, hairline edge, soft shadow in light mode.
 @interface CCard : NSView @end
 @implementation CCard
 - (void)drawRect:(NSRect)r {
-    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:10 yRadius:10];
-    [[[NSColor labelColor] colorWithAlphaComponent:0.045] setFill]; [p fill];
-    [[[NSColor labelColor] colorWithAlphaComponent:0.10] setStroke]; p.lineWidth = 1; [p stroke];
+    NSRect b = NSInsetRect(self.bounds, 0.5, 0.5);
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:b xRadius:12 yRadius:12];
+    if (!cIsDark(self)) {
+        NSShadow *sh = [NSShadow new]; sh.shadowBlurRadius = 3; sh.shadowOffset = NSMakeSize(0, -1); sh.shadowColor = [NSColor colorWithWhite:0 alpha:0.06];
+        [NSGraphicsContext saveGraphicsState]; [sh set]; [setCardFill(self) setFill]; [p fill]; [NSGraphicsContext restoreGraphicsState];
+    } else { [setCardFill(self) setFill]; [p fill]; }
+    p.lineWidth = 1; [setCardEdge(self) setStroke]; [p stroke];
 }
 @end
 
-// One row inside a card, with an inset hairline above it (except the first row).
+// One row inside a card, with a hairline above it (except the first row) that starts where the text starts.
 @interface CSetRow : NSView
 @property (nonatomic) BOOL topLine;
 @end
 @implementation CSetRow
 - (void)drawRect:(NSRect)r {
     if (!self.topLine) return;
-    [[[NSColor labelColor] colorWithAlphaComponent:0.09] setFill];
-    NSRectFillUsingOperation(NSMakeRect(14, self.bounds.size.height - 1, self.bounds.size.width - 14, 1), NSCompositingOperationSourceOver);
+    [setDivider(self) setFill];
+    NSRectFillUsingOperation(NSMakeRect(16, self.bounds.size.height - 1, self.bounds.size.width - 16, 1), NSCompositingOperationSourceOver);
 }
 @end
 
@@ -42,27 +58,36 @@ static NSImage *tintedImage(NSImage *img, NSColor *c) {
         [img drawInRect:r]; [c set]; NSRectFillUsingOperation(r, NSCompositingOperationSourceAtop); return YES; }];
 }
 
-// Sidebar item: graphite icon tile + label, soft selection pill.
+// Sidebar item: colour tile + label. Ice-tinted pill when selected, a faint one under the pointer.
 @interface CNavItem : NSView
 @property (nonatomic, copy) NSString *title, *symbol, *kind;
-@property (nonatomic) BOOL selected;
+@property (nonatomic) BOOL selected, hover;
 @property (nonatomic, copy) void (^onClick)(void);
 @end
 @implementation CNavItem
 - (BOOL)isFlipped { return YES; }
 - (void)drawRect:(NSRect)r {
     NSRect b = self.bounds;
-    if (self.selected) {
-        [cSelFill(self) setFill]; [[NSBezierPath bezierPathWithRoundedRect:b xRadius:8 yRadius:8] fill];
+    if (self.selected || self.hover) {
+        NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:b xRadius:8 yRadius:8];
+        [(self.selected ? cSelFill(self) : [[NSColor labelColor] colorWithAlphaComponent:0.045]) setFill]; [p fill];
+        if (self.selected) { p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:7.5 yRadius:7.5]; p.lineWidth = 1; [cSelEdge(self) setStroke]; [p stroke]; }
     }
     NSRect tile = NSMakeRect(8, floor((b.size.height - 22) / 2), 22, 22);
     [tileImage(self.symbol, self.kind) drawInRect:tile fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-    NSDictionary *at = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:self.selected ? NSFontWeightMedium : NSFontWeightRegular],
-                         NSForegroundColorAttributeName: [NSColor labelColor]};
+    NSDictionary *at = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:self.selected ? NSFontWeightSemibold : NSFontWeightRegular],
+                         NSForegroundColorAttributeName: self.selected ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.85]};
     NSSize ts = [self.title sizeWithAttributes:at];
-    [self.title drawAtPoint:NSMakePoint(40, (b.size.height - ts.height) / 2) withAttributes:at];
+    [self.title drawAtPoint:NSMakePoint(40, floor((b.size.height - ts.height) / 2)) withAttributes:at];
 }
 - (void)mouseDown:(NSEvent *)e { if (self.onClick) self.onClick(); }
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *t in self.trackingAreas) [self removeTrackingArea:t];
+    [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect owner:self userInfo:nil]];
+}
+- (void)mouseEntered:(NSEvent *)e { self.hover = YES; [self setNeedsDisplay:YES]; }
+- (void)mouseExited:(NSEvent *)e { self.hover = NO; [self setNeedsDisplay:YES]; }
 @end
 
 // Click-to-record shortcut button.
@@ -75,7 +100,54 @@ static NSImage *tintedImage(NSImage *img, NSColor *c) {
 - (void)stop;
 @end
 @implementation CHotkeyButton
-- (void)refresh { self.title = self.monitor ? @"Press shortcut…  (esc cancels)" : (self.spec.length ? prettyHotkey(self.spec) : @"Record Shortcut"); }
+// Drawn as keycaps (⌘ ⇧ Space) like the launcher's footer; recording shows an ice outline and a prompt.
+- (void)refresh {
+    self.title = @""; self.bordered = NO; self.toolTip = self.monitor ? nil : @"Click to record a new shortcut";
+    [self invalidateIntrinsicContentSize]; [self setNeedsDisplay:YES];
+}
+- (NSArray<NSString *> *)caps {
+    if (self.monitor) return @[];
+    if (!self.spec.length) return @[];
+    return [prettyHotkey(self.spec) componentsSeparatedByString:@" "];
+}
+- (NSDictionary *)capAttrs { return @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor labelColor]}; }
+- (NSString *)prompt { return self.monitor ? @"Type the shortcut…   esc cancels" : @"Record Shortcut"; }
+- (NSSize)intrinsicContentSize {
+    NSArray *caps = [self caps]; CGFloat w = 0;
+    if (caps.count) { for (NSString *c in caps) w += MAX(26, ceil([c sizeWithAttributes:[self capAttrs]].width) + 14) + 4; w -= 4; }
+    else w = ceil([[self prompt] sizeWithAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + 24;
+    return NSMakeSize(w + 4, 26);
+}
+- (void)drawRect:(NSRect)dirty {
+    BOOL dark = cIsDark(self);
+    NSArray *caps = [self caps];
+    if (!caps.count) {
+        NSRect b = NSInsetRect(self.bounds, 1.5, 1.5);
+        NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:b xRadius:7 yRadius:7];
+        [(self.monitor ? [cAccent() colorWithAlphaComponent:0.12] : [[NSColor labelColor] colorWithAlphaComponent:0.05]) setFill]; [p fill];
+        p.lineWidth = 1; [(self.monitor ? cAccent() : [[NSColor labelColor] colorWithAlphaComponent:0.15]) setStroke];
+        if (!self.monitor) { CGFloat dash[] = {3, 2}; [p setLineDash:dash count:2 phase:0]; }
+        [p stroke];
+        NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium], NSForegroundColorAttributeName: self.monitor ? [NSColor labelColor] : [NSColor secondaryLabelColor]};
+        NSSize s = [[self prompt] sizeWithAttributes:a];
+        [[self prompt] drawAtPoint:NSMakePoint(NSMidX(self.bounds) - s.width / 2, NSMidY(self.bounds) - s.height / 2) withAttributes:a];
+        return;
+    }
+    CGFloat x = 2;
+    for (NSString *c in caps) {
+        NSSize s = [c sizeWithAttributes:[self capAttrs]];
+        CGFloat w = MAX(26, ceil(s.width) + 14);
+        NSRect k = NSMakeRect(x, 2, w, self.bounds.size.height - 4);
+        NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(k, 0.5, 0.5) xRadius:6 yRadius:6];
+        [(dark ? [NSColor colorWithWhite:1 alpha:0.10] : [NSColor colorWithWhite:1 alpha:1]) setFill]; [p fill];
+        p.lineWidth = 1; [(dark ? [NSColor colorWithWhite:1 alpha:0.10] : [NSColor colorWithWhite:0 alpha:0.14]) setStroke]; [p stroke];
+        NSRect lip = NSMakeRect(NSMinX(k) + 3, NSMinY(k) + 0.5, w - 6, 1);           // a keycap's lower lip
+        [(dark ? [NSColor colorWithWhite:0 alpha:0.35] : [NSColor colorWithWhite:0 alpha:0.10]) setFill]; NSRectFillUsingOperation(lip, NSCompositingOperationSourceOver);
+        [c drawAtPoint:NSMakePoint(NSMidX(k) - s.width / 2, NSMidY(k) - s.height / 2) withAttributes:[self capAttrs]];
+        x += w + 4;
+    }
+}
+- (void)resetCursorRects { [self addCursorRect:self.bounds cursor:[NSCursor pointingHandCursor]]; }
 - (void)toggleRecord:(id)s {
     if (self.monitor) { [self stop]; return; }
     if (self.onRecording) self.onRecording(YES);
@@ -119,7 +191,7 @@ static CSetRow *setRow(NSString *title, NSString *sub, NSView *control) {
     NSStackView *texts = [NSStackView stackViewWithViews:@[setLabel(title, 13, NSFontWeightRegular, nil)]];
     texts.orientation = NSUserInterfaceLayoutOrientationVertical; texts.alignment = NSLayoutAttributeLeading; texts.spacing = 2;
     if (sub.length) {
-        NSTextField *s = setLabel(sub, 11, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+        NSTextField *s = setLabel(sub, 11.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
         s.lineBreakMode = NSLineBreakByTruncatingTail;
         [s setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
         [texts addArrangedSubview:s];
@@ -127,18 +199,18 @@ static CSetRow *setRow(NSString *title, NSString *sub, NSView *control) {
     texts.translatesAutoresizingMaskIntoConstraints = NO;
     [texts setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     [r addSubview:texts];
-    NSMutableArray *cs = [@[[r.heightAnchor constraintEqualToConstant:sub.length ? 54 : 44],
-                            [texts.leadingAnchor constraintEqualToAnchor:r.leadingAnchor constant:14],
+    NSMutableArray *cs = [@[[r.heightAnchor constraintEqualToConstant:sub.length ? 58 : 46],
+                            [texts.leadingAnchor constraintEqualToAnchor:r.leadingAnchor constant:16],
                             [texts.centerYAnchor constraintEqualToAnchor:r.centerYAnchor]] mutableCopy];
     if (control) {
         control.translatesAutoresizingMaskIntoConstraints = NO;
         [control setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
         [r addSubview:control];
-        [cs addObjectsFromArray:@[[control.trailingAnchor constraintEqualToAnchor:r.trailingAnchor constant:-14],
+        [cs addObjectsFromArray:@[[control.trailingAnchor constraintEqualToAnchor:r.trailingAnchor constant:-16],
                                   [control.centerYAnchor constraintEqualToAnchor:r.centerYAnchor],
                                   [control.leadingAnchor constraintGreaterThanOrEqualToAnchor:texts.trailingAnchor constant:16]]];
     } else {
-        [cs addObject:[texts.trailingAnchor constraintLessThanOrEqualToAnchor:r.trailingAnchor constant:-14]];
+        [cs addObject:[texts.trailingAnchor constraintLessThanOrEqualToAnchor:r.trailingAnchor constant:-16]];
     }
     [NSLayoutConstraint activateConstraints:cs];
     return r;
@@ -189,11 +261,17 @@ static NSTextField *setField(NSString *value, NSString *placeholder, CGFloat wid
 @property (nonatomic, strong) NSTimer *axTimer;
 @end
 
+// name, symbol, tile colour, one-line purpose, sidebar group (shown before the first page of each group)
 static NSArray *settingsPages(void) {
-    return @[@[@"General", @"gearshape.fill", @"System"], @[@"Home", @"house.fill", @"Clipboard"], @[@"Search", @"magnifyingglass", @"Web"],
-             @[@"Commands", @"terminal.fill", @"Script"], @[@"Snippets", @"text.quote", @"Snippet"], @[@"Shortcuts", @"command", @"Media"],
-             @[@"Quick Links", @"link", @"Link"], @[@"Permissions", @"hand.raised.fill", @"Window"],
-             @[@"Advanced", @"wrench.and.screwdriver.fill", @"Centre"]];
+    return @[@[@"General", @"gearshape.fill", @"System", @"Your shortcut, startup and what Centre remembers.", @""],
+             @[@"Home", @"house.fill", @"Clipboard", @"What you see the moment Centre opens.", @""],
+             @[@"Search", @"magnifyingglass", @"Web", @"Where searches go when nothing on your Mac matches.", @""],
+             @[@"Commands", @"terminal.fill", @"Script", @"Scripts and flows that run like built-in commands.", @"Make It Yours"],
+             @[@"Snippets", @"text.quote", @"Snippet", @"Text you paste anywhere in a keystroke.", @""],
+             @[@"Shortcuts", @"command", @"Media", @"Global keys for anything Centre can run.", @""],
+             @[@"Quick Links", @"link", @"Link", @"Websites you open by name.", @""],
+             @[@"Permissions", @"hand.raised.fill", @"Window", @"What Centre can access, and how to fix what's missing.", @"System"],
+             @[@"Advanced", @"wrench.and.screwdriver.fill", @"Centre", @"App folders, the config file and maintenance.", @""]];
 }
 static NSInteger pageIndex(NSString *name) {
     NSArray *p = settingsPages();
@@ -234,7 +312,7 @@ static NSArray *searchEngines(void) {
 }
 
 - (void)buildWindow {
-    const CGFloat W = 780, H = 560, SB = 214;
+    const CGFloat W = 860, H = 640, SB = 228;
     NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, W, H)
                                               styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView
                                                 backing:NSBackingStoreBuffered defer:NO];
@@ -250,21 +328,31 @@ static NSArray *searchEngines(void) {
     [side addSubview:sc];
 
     NSImageView *icon = [NSImageView imageViewWithImage:[NSApp applicationIconImage]];
-    icon.frame = NSMakeRect(16, 44, 34, 34); icon.imageScaling = NSImageScaleProportionallyUpOrDown; [sc addSubview:icon];
-    NSTextField *name = setLabel(@"Centre", 14, NSFontWeightSemibold, nil); name.frame = NSMakeRect(56, 45, 150, 18); [sc addSubview:name];
-    NSTextField *ver = setLabel([@"Version " stringByAppendingString:[NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"2.0"], 11, NSFontWeightRegular, [NSColor secondaryLabelColor]); ver.frame = NSMakeRect(56, 63, 150, 14); [sc addSubview:ver];
+    icon.frame = NSMakeRect(16, 46, 38, 38); icon.imageScaling = NSImageScaleProportionallyUpOrDown; [sc addSubview:icon];
+    NSTextField *name = setLabel(@"Centre", 15, NSFontWeightSemibold, nil); name.frame = NSMakeRect(62, 48, 150, 19); [sc addSubview:name];
+    NSTextField *ver = setLabel([@"Version " stringByAppendingString:[NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"2.0"], 11, NSFontWeightRegular, [NSColor tertiaryLabelColor]); ver.frame = NSMakeRect(62, 67, 150, 14); [sc addSubview:ver];
 
     NSMutableArray *items = [NSMutableArray new];
     NSArray *pages = settingsPages();
     __weak CSettings *ws = self;
+    CGFloat y = 104;
     for (NSUInteger i = 0; i < pages.count; i++) {
-        CNavItem *it = [[CNavItem alloc] initWithFrame:NSMakeRect(10, 96 + i * 31, SB - 20, 29)];
+        if ([pages[i][4] length]) {                               // group label: small tracked capitals, like the launcher
+            y += 12;
+            NSTextField *g = [NSTextField labelWithAttributedString:sectionTitle(pages[i][4])];
+            g.frame = NSMakeRect(20, y, SB - 40, 14); [sc addSubview:g];
+            y += 20;
+        }
+        CNavItem *it = [[CNavItem alloc] initWithFrame:NSMakeRect(10, y, SB - 20, 30)];
         it.title = pages[i][0]; it.symbol = pages[i][1]; it.kind = pages[i][2];
         it.onClick = ^{ [ws showPage:(NSInteger)i]; };
         [sc addSubview:it]; [items addObject:it];
+        y += 32;
     }
     self.nav = items;
 
+    CSetSurface *surface = [[CSetSurface alloc] initWithFrame:NSMakeRect(SB, 0, W - SB, H)];
+    surface.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; [root addSubview:surface];
     NSBox *line = [[NSBox alloc] initWithFrame:NSMakeRect(SB, 0, 1, H)];
     line.boxType = NSBoxSeparator; line.autoresizingMask = NSViewHeightSizable; [root addSubview:line];
 
@@ -306,15 +394,23 @@ static NSArray *searchEngines(void) {
 
     NSStackView *st = [NSStackView new];
     st.orientation = NSUserInterfaceLayoutOrientationVertical; st.alignment = NSLayoutAttributeLeading; st.spacing = 8;
-    st.edgeInsets = NSEdgeInsetsMake(46, 32, 36, 32); st.translatesAutoresizingMaskIntoConstraints = NO;
+    st.edgeInsets = NSEdgeInsetsMake(44, 36, 40, 36); st.translatesAutoresizingMaskIntoConstraints = NO;
     [self.doc addSubview:st];
     [NSLayoutConstraint activateConstraints:@[[st.topAnchor constraintEqualToAnchor:self.doc.topAnchor],
                                               [st.leadingAnchor constraintEqualToAnchor:self.doc.leadingAnchor],
                                               [st.trailingAnchor constraintEqualToAnchor:self.doc.trailingAnchor],
                                               [st.bottomAnchor constraintEqualToAnchor:self.doc.bottomAnchor]]];
     self.pageStack = st;
-    NSTextField *title = setLabel(settingsPages()[i][0], 22, NSFontWeightBold, nil);
-    [st addArrangedSubview:title]; [st setCustomSpacing:20 afterView:title];
+    NSArray *pg = settingsPages()[i];
+    NSImageView *tile = [NSImageView imageViewWithImage:tileImage(pg[1], pg[2])];
+    tile.imageScaling = NSImageScaleProportionallyUpOrDown;
+    [tile.widthAnchor constraintEqualToConstant:40].active = YES; [tile.heightAnchor constraintEqualToConstant:40].active = YES;
+    NSTextField *title = setLabel(pg[0], 24, NSFontWeightBold, nil);
+    NSTextField *purpose = setLabel(pg[3], 12.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
+    NSStackView *words = [NSStackView stackViewWithViews:@[title, purpose]];
+    words.orientation = NSUserInterfaceLayoutOrientationVertical; words.alignment = NSLayoutAttributeLeading; words.spacing = 1;
+    NSStackView *head = [NSStackView stackViewWithViews:@[tile, words]]; head.spacing = 14; head.alignment = NSLayoutAttributeCenterY;
+    [st addArrangedSubview:head]; [st setCustomSpacing:30 afterView:head];
     NSString *name = settingsPages()[i][0];
     if ([name isEqualToString:@"General"]) [self buildGeneral];
     else if ([name isEqualToString:@"Home"]) [self buildHomePage];
@@ -348,22 +444,22 @@ static NSArray *searchEngines(void) {
 
 - (void)addFull:(NSView *)v {
     [self.pageStack addArrangedSubview:v];
-    [v.widthAnchor constraintEqualToAnchor:self.pageStack.widthAnchor constant:-64].active = YES;
+    [v.widthAnchor constraintEqualToAnchor:self.pageStack.widthAnchor constant:-72].active = YES;
 }
 - (void)addHeader:(NSString *)t note:(NSString *)n {
-    NSTextField *h = setLabel(t, 13, NSFontWeightSemibold, nil);
+    NSTextField *h = [NSTextField labelWithAttributedString:sectionTitle(t)];
     [self.pageStack addArrangedSubview:h];
     if (n.length) {
-        [self.pageStack setCustomSpacing:3 afterView:h];
+        [self.pageStack setCustomSpacing:5 afterView:h];
         NSTextField *nt = [NSTextField wrappingLabelWithString:n];
-        nt.font = [NSFont systemFontOfSize:11.5]; nt.textColor = [NSColor secondaryLabelColor]; nt.selectable = NO;
+        nt.font = [NSFont systemFontOfSize:12]; nt.textColor = [NSColor secondaryLabelColor]; nt.selectable = NO;
         [self addFull:nt];
-        [self.pageStack setCustomSpacing:10 afterView:nt];
+        [self.pageStack setCustomSpacing:12 afterView:nt];
     } else {
-        [self.pageStack setCustomSpacing:8 afterView:h];
+        [self.pageStack setCustomSpacing:9 afterView:h];
     }
 }
-- (void)gap { NSView *last = self.pageStack.arrangedSubviews.lastObject; if (last) [self.pageStack setCustomSpacing:28 afterView:last]; }
+- (void)gap { NSView *last = self.pageStack.arrangedSubviews.lastObject; if (last) [self.pageStack setCustomSpacing:32 afterView:last]; }
 
 - (NSSwitch *)switchFor:(NSString *)key fallback:(BOOL)def {
     NSSwitch *s = [NSSwitch new]; s.controlSize = NSControlSizeSmall;
@@ -387,7 +483,7 @@ static NSArray *searchEngines(void) {
     hk.onRecording = ^(BOOL on) {
         if (on) { [ws.app unregisterHotKey]; [ws.app unregisterCommandHotKeys]; } else { [ws.app registerHotKey]; [ws.app registerCommandHotKeys]; } };
     hk.onChange = ^(NSString *s) { [ws saveKey:@"hotkey" value:s]; };
-    [hk refresh]; [hk.widthAnchor constraintGreaterThanOrEqualToConstant:120].active = YES;
+    [hk refresh];
     self.hotkeyButton = hk;
 
     NSSwitch *login = [self switchFor:@"launchAtLogin" fallback:NO];
@@ -582,7 +678,9 @@ static NSString *keyKind(NSString *k) {
     if ([k hasPrefix:@"/"]) {
         BOOL dir = NO; [[NSFileManager defaultManager] fileExistsAtPath:k isDirectory:&dir];
         if ([k.pathExtension isEqualToString:@"app"]) return @"App";
-        return [(dir ? @"Folder · " : @"File · ") stringByAppendingString:[k.stringByDeletingLastPathComponent stringByAbbreviatingWithTildeInPath]];
+        NSString *parent = [k.stringByDeletingLastPathComponent stringByAbbreviatingWithTildeInPath];
+        if ([parent isEqualToString:@"/"]) return dir ? @"Folder" : @"File";
+        return [(dir ? @"Folder in " : @"File in ") stringByAppendingString:parent];
     }
     return @"Link";
 }
@@ -657,7 +755,15 @@ static NSString *keyKind(NSString *k) {
     tv.string = text ?: @""; tv.identifier = ident; tv.delegate = self; tv.richText = NO; tv.allowsUndo = YES;
     tv.automaticQuoteSubstitutionEnabled = NO; tv.automaticDashSubstitutionEnabled = NO; tv.automaticTextReplacementEnabled = NO;
     tv.automaticSpellingCorrectionEnabled = NO; tv.textContainerInset = NSMakeSize(4, 6);
-    sv.borderType = NSBezelBorder; sv.translatesAutoresizingMaskIntoConstraints = NO;
+    // A soft inset well instead of the old bezel: rounded, hairline, a shade off the card.
+    BOOL dark = [self.window.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
+    sv.borderType = NSNoBorder; sv.drawsBackground = NO; sv.translatesAutoresizingMaskIntoConstraints = NO;
+    sv.autohidesScrollers = YES; sv.scrollerStyle = NSScrollerStyleOverlay;
+    tv.drawsBackground = YES;
+    tv.backgroundColor = dark ? [NSColor colorWithSRGBRed:0.112 green:0.117 blue:0.132 alpha:1] : [NSColor colorWithSRGBRed:0.968 green:0.970 blue:0.977 alpha:1];
+    tv.insertionPointColor = cAccent();
+    sv.wantsLayer = YES; sv.layer.cornerRadius = 8; sv.layer.masksToBounds = YES; sv.layer.borderWidth = 1;
+    sv.layer.borderColor = (dark ? [NSColor colorWithWhite:1 alpha:0.09] : [NSColor colorWithWhite:0 alpha:0.10]).CGColor;
     [sv.heightAnchor constraintEqualToConstant:h].active = YES;
     return sv;
 }
@@ -720,7 +826,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
 }
 
 - (void)buildSnippets {
-    [self addHeader:@"Snippets" note:@"Text you paste anywhere: find it by name or keyword in Centre (type its exact keyword to jump straight to it), or type  snip. Placeholders: {date} {time} {datetime} {weekday} {iso} {clipboard} {uuid}."];
+    [self addHeader:@"Your snippets" note:@"Text you paste anywhere: find it by name or keyword in Centre (type its exact keyword to jump straight to it), or type  snip. Placeholders: {date} {time} {datetime} {weekday} {iso} {clipboard} {uuid}."];
     [self.pageStack addArrangedSubview:[self toolbar:@[[self button:@"New Snippet" target:self action:@selector(addSnippet:)]]]];
     [self.pageStack setCustomSpacing:14 afterView:self.pageStack.arrangedSubviews.lastObject];
     if (!self.snips.count) [self addFull:setCard(@[setRow(@"No snippets yet", @"Addresses, replies, sign-offs — anything you type often.", nil)])];
@@ -846,7 +952,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
         b.onRecording = ^(BOOL on) {
             if (on) { [ws.app unregisterHotKey]; [ws.app unregisterCommandHotKeys]; } else { [ws.app registerHotKey]; [ws.app registerCommandHotKeys]; } };
         b.onChange = ^(NSString *spec) { [ws setShortcut:spec forKey:key]; };
-        [b refresh]; [b.widthAnchor constraintGreaterThanOrEqualToConstant:130].active = YES;
+        [b refresh];
         NSButton *rm = [self iconButton:@"minus.circle" tip:@"Remove shortcut" action:@selector(removeShortcut:) tag:0]; rm.identifier = key;
         NSStackView *ctl = [NSStackView stackViewWithViews:@[b, rm]]; ctl.spacing = 6;
         BOOL taken = [self.app.hotKeyFailures containsObject:key];
