@@ -1,6 +1,6 @@
 #!/bin/bash
 # Centre launcher — builds (if needed) and runs Centre.app. Needs only Command Line Tools (clang).
-#   ./centre          build if changed, then (re)launch
+#   ./centre          build if Sources/ changed, then (re)launch
 #   ./centre build    force rebuild
 #   ./centre stop     quit Centre
 #   ./centre log      show recent Centre log lines
@@ -8,7 +8,7 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/Centre.app"
 BIN="$APP/Contents/MacOS/Centre"
-SRC="$DIR/Centre.m"
+SRCDIR="$DIR/Sources"
 
 if [ "$1" = "stop" ]; then pkill -x Centre 2>/dev/null || true; echo "Centre stopped"; exit 0; fi
 if [ "$1" = "log" ]; then log show --predicate 'process == "Centre"' --last 10m --style compact 2>/dev/null | tail -40; exit 0; fi
@@ -23,8 +23,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>com.y.centre</string>
   <key>CFBundleExecutable</key><string>Centre</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>1.0</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>2.0</string>
+  <key>CFBundleShortVersionString</key><string>2.0</string>
   <key>CFBundleIconFile</key><string>Centre</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSUIElement</key><true/>
@@ -36,15 +36,30 @@ PLIST
 [ -f "$DIR/Centre.icns" ] && cp -f "$DIR/Centre.icns" "$APP/Contents/Resources/Centre.icns"
 touch "$APP"   # nudge Finder/Dock icon cache
 
-if [ "$1" = "build" ] || [ ! -x "$BIN" ] || [ "$SRC" -nt "$BIN" ]; then
+stale() { [ ! -x "$BIN" ] || [ -n "$(find "$SRCDIR" \( -name '*.m' -o -name '*.h' \) -newer "$BIN" 2>/dev/null | head -1)" ]; }
+
+if [ "$1" = "build" ] || stale; then
   echo "Compiling Centre…"
   set -o pipefail
   clang -fobjc-arc -O2 -Wall -Wno-deprecated-declarations -Wno-multichar -Wno-unused-variable \
-    -framework Cocoa -framework Carbon -framework ApplicationServices -framework QuartzCore \
-    "$SRC" -o "$BIN" 2>&1 | tee "$DIR/build.log"
+    -framework Cocoa -framework Carbon -framework ApplicationServices -framework QuartzCore -framework Security \
+    -framework ServiceManagement -framework IOKit -framework CoreServices \
+    -I"$SRCDIR" "$SRCDIR"/*.m -o "$BIN.new" 2>&1 | tee "$DIR/build.log"
   set +o pipefail
+
+  # The new build must pass its own checks before it replaces the working app.
+  "$BIN.new" --selftest >> "$DIR/build.log" 2>&1 &
+  T=$!; for i in $(seq 1 100); do kill -0 $T 2>/dev/null || break; sleep 0.1; done
+  if kill -0 $T 2>/dev/null; then kill -9 $T 2>/dev/null; echo "Self-test timed out" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1; fi
+  if ! wait $T; then echo "Self-test failed — keeping the previous build" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1; fi
+
+  mv -f "$BIN.new" "$BIN"
   if command -v codesign >/dev/null 2>&1; then
-    codesign -s - -f --identifier com.y.centre "$APP" >/dev/null 2>&1 || true
+    # Sign with the local certificate from setup-signing.sh when it exists, so macOS keeps Centre's
+    # permissions across rebuilds; otherwise fall back to an ad-hoc signature.
+    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Centre Local Signing"/ {print $2; exit}')
+    codesign -s "${SIGN_ID:--}" -f --identifier com.y.centre "$APP" >/dev/null 2>&1 \
+      || codesign -s - -f --identifier com.y.centre "$APP" >/dev/null 2>&1 || true
   fi
   echo "Built $APP"
 fi
@@ -54,4 +69,4 @@ pkill -x Centre 2>/dev/null || true
 for i in $(seq 1 30); do pgrep -x Centre >/dev/null || break; sleep 0.1; done   # wait for old one to exit
 pkill -9 -x Centre 2>/dev/null || true
 open "$APP"
-echo "Centre is running — press ⌘ Space. Menu-bar icon: ◎"
+echo "Centre is running — press ⌘ Space."

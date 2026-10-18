@@ -1,6 +1,7 @@
 # Build output — ./centre rebuilds it from Centre.m
 Centre.app/
 build.log
+signing.log
 
 # Local backups and scratch
 *.bak
