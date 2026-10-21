@@ -774,7 +774,9 @@ static NSString *keyKind(NSString *k) {
                        : @"Left exactly as you set it in System Settings.";
     [self addHeader:@"macOS Dock" note:@"Centre remembers your own Dock settings and puts them back when the taskbar is off or Centre quits."];
     [self addFull:setCard(@[setRow(@"While the taskbar is on, the Dock", dockNote,
-                                   [self choice:@[@[@"Stays as it is", @"keep"], @[@"Hides automatically", @"autohide"], @[@"Is turned off", @"off"]] key:@"taskbarDock" fallback:@"keep"])])];
+                                   [self choice:@[@[@"Stays as it is", @"keep"], @[@"Hides automatically", @"autohide"], @[@"Is turned off", @"off"]] key:@"taskbarDock" fallback:@"keep"]),
+                            setRow(@"Quick minimise", @"Windows shrink away with Scale instead of the slower Genie. macOS has no instant option.",
+                                   [self switchFor:@"taskbarQuickMinimise" fallback:YES])])];
     [self gap];
 
     [self addHeader:@"Apps" note:nil];
@@ -783,7 +785,9 @@ static NSString *keyKind(NSString *k) {
     [self gap];
 
     [self addHeader:@"Tray" note:@"Scroll on the speaker to change the volume; click it to mute. Click the clock for a calendar. Right-click anything in the tray for its settings."];
-    [self addFull:setCard(@[setRow(@"Now playing", @"Artwork and title; click to play or pause.", [self switchFor:@"taskbarMedia" fallback:YES]),
+    [self addFull:setCard(@[setRow(@"Clock", @"Off: the calendar is still in any tray item's right-click menu.", [self switchFor:@"taskbarClock" fallback:YES]),
+                            setRow(@"Now playing", @"Artwork and title; click to play or pause.", [self switchFor:@"taskbarMedia" fallback:YES]),
+                            setRow(@"Music controls", @"Previous, play or pause, and next, beside what's playing.", [self switchFor:@"taskbarMediaControls" fallback:YES]),
                             setRow(@"Volume", nil, [self switchFor:@"taskbarVolume" fallback:YES]),
                             setRow(@"Wi-Fi", nil, [self switchFor:@"taskbarWifi" fallback:YES]),
                             setRow(@"Battery", @"Percentage beside the icon.", [self switchFor:@"taskbarBattery" fallback:YES]),
