@@ -33,6 +33,10 @@ int main(int argc, const char *argv[]) {
         [appMenu addItemWithTitle:@"Quit Centre" action:@selector(terminate:) keyEquivalent:@"q"];
         NSMenuItem *editItem = [NSMenuItem new]; [bar addItem:editItem];
         NSMenu *edit = [[NSMenu alloc] initWithTitle:@"Edit"]; editItem.submenu = edit;
+        [edit addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"];
+        NSMenuItem *redo = [edit addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"z"];
+        redo.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagShift;
+        [edit addItem:[NSMenuItem separatorItem]];
         [edit addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
         [edit addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
         [edit addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];

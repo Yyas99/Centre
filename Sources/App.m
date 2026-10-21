@@ -1,6 +1,7 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "App.h"
 #import "Settings.h"
+#import "Taskbar.h"
 #import <ServiceManagement/ServiceManagement.h>
 
 
@@ -35,10 +36,25 @@
     if (self.config && self.configMtime && [mt isEqualToDate:self.configMtime]) return;
     NSData *d = [NSData dataWithContentsOfFile:p];
     NSDictionary *c = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
-    if (![c isKindOfClass:[NSDictionary class]]) c = @{};
-    NSString *oldHK = self.config[@"hotkey"];
+    if (![c isKindOfClass:[NSDictionary class]]) {
+        // A typo (say, a trailing comma) must never cost you your commands and snippets: keep a copy of the file,
+        // keep using the last good settings, and say so once.
+        self.configMtime = mt;
+        NSString *broken = [p stringByAppendingString:@".broken"];
+        [fm removeItemAtPath:broken error:nil]; [fm copyItemAtPath:p toPath:broken error:nil];
+        if (!self.snapshotDir) showHUDFor(@"config.json has a typo — Centre kept your last good settings (copy saved as config.json.broken)", @"exclamationmark.triangle.fill", 5);
+        if (self.config) return;
+        c = @{};
+    }
+    NSDictionary *old = self.config;
+    NSString *oldHK = old[@"hotkey"];
     self.config = c; self.configMtime = mt;
     if (oldHK && ![oldHK isEqualToString:(c[@"hotkey"] ?: @"cmd+space")]) [self registerHotKey];
+    if (old && ![old isEqualToDictionary:c] && !self.snapshotDir) {   // edited here or in a text editor: everything follows
+        [self registerCommandHotKeys];
+        [self updateStatusItem];
+        [self.taskbar apply];
+    }
 }
 
 #pragma mark Usage / frecency
@@ -69,7 +85,8 @@
 
 - (void)scanApps {
     self.lastScan = [NSDate date].timeIntervalSince1970;
-    NSArray *folders = self.config[@"appFolders"] ?: @[@"/Applications", @"/System/Applications", @"~/Applications"];
+    id cfg = self.config[@"appFolders"];
+    NSArray *folders = [cfg isKindOfClass:[NSArray class]] && [cfg count] ? cfg : @[@"/Applications", @"/System/Applications", @"/System/Applications/Utilities", @"~/Applications"];
     NSSet *have = [NSSet setWithArray:self.iconCache.allKeys ?: @[]];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         NSFileManager *fm = [NSFileManager defaultManager];
@@ -228,17 +245,9 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
         installed = YES;
     }
     if (self.hotKeyRef) { UnregisterEventHotKey(self.hotKeyRef); self.hotKeyRef = NULL; }
-    NSString *spec = [(self.config[@"hotkey"] ?: @"cmd+space") lowercaseString];
-    UInt32 mods = 0; UInt32 key = kVK_Space;
-    NSDictionary *keys = hotkeyKeyMap();
-    for (NSString *part in [spec componentsSeparatedByString:@"+"]) {
-        NSString *t = [part stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        if ([t isEqualToString:@"cmd"] || [t isEqualToString:@"command"]) mods |= cmdKey;
-        else if ([t isEqualToString:@"alt"] || [t isEqualToString:@"option"] || [t isEqualToString:@"opt"]) mods |= optionKey;
-        else if ([t isEqualToString:@"ctrl"] || [t isEqualToString:@"control"]) mods |= controlKey;
-        else if ([t isEqualToString:@"shift"]) mods |= shiftKey;
-        else if (keys[t]) key = [keys[t] unsignedIntValue];
-    }
+    NSString *spec = [([self.config[@"hotkey"] isKindOfClass:[NSString class]] ? self.config[@"hotkey"] : @"cmd+space") lowercaseString];
+    UInt32 mods = 0, key = 0;
+    if (!parseHotkey(spec, &key, &mods)) { spec = @"cmd+space"; key = kVK_Space; mods = cmdKey; }   // never a bare key grabbed system-wide
     EventHotKeyID hkid; hkid.signature = 'CNTR'; hkid.id = 1;
     EventHotKeyRef ref = NULL;
     OSStatus st = RegisterEventHotKey(key, mods, hkid, GetApplicationEventTarget(), 0, &ref);
@@ -300,15 +309,13 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [self openSettings];
     [self.settings showPageNamed:name];
 }
+- (NSMutableDictionary *)mutableConfig { [self loadConfig]; return [self.config mutableCopy] ?: [NSMutableDictionary new]; }
 - (void)writeConfig:(NSDictionary *)c {
     NSData *d = [NSJSONSerialization dataWithJSONObject:c options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
     if (!d) return;
     id oldFolders = self.config[@"appFolders"];
     [d writeToFile:self.configPath atomically:YES];
-    self.configMtime = nil; [self loadConfig];
-    [self registerHotKey];
-    [self registerCommandHotKeys];
-    [self updateStatusItem];
+    self.configMtime = nil; [self loadConfig];                       // applies hotkeys, menu bar icon and taskbar
     if (![oldFolders isEqual:self.config[@"appFolders"]]) [self scanApps];
 }
 // macOS 13+: a real login item (SMAppService). Older systems: System Events.
@@ -358,6 +365,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     for (NSString *n in [fm contentsOfDirectoryAtPath:dir error:nil]) {
         if (![n.pathExtension isEqualToString:@"m"] && ![n.pathExtension isEqualToString:@"h"]) continue;
         NSDate *d = [[fm attributesOfItemAtPath:[dir stringByAppendingPathComponent:n] error:nil] fileModificationDate];
+        if ([d timeIntervalSinceNow] > 5) { NSLog(@"Centre: %@ is dated in the future; ignoring it for rebuilds", n); continue; }
         if (d && (!newest || [d compare:newest] == NSOrderedDescending)) newest = d;
     }
     return newest;
@@ -368,23 +376,30 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     return !b || [s compare:b] == NSOrderedDescending;   // a missing binary always counts as out of date
 }
 - (void)rebuild { [self rebuildQuietly:NO]; }
+// Hand over to the fresh binary: a helper waits until this process has really exited, then opens the new build
+// (opening earlier would just wake the dying copy, or the new one would defer to it and quit).
+- (void)relaunch {
+    self.relaunchPending = NO;
+    [self saveClipHandoff];
+    NSTask *t = [NSTask new]; t.launchPath = @"/bin/sh";
+    t.arguments = @[@"-c", [NSString stringWithFormat:@"while kill -0 %d 2>/dev/null; do sleep 0.1; done; open %@", getpid(), shellQuote([NSBundle mainBundle].bundlePath)]];
+    [t launch];
+    [NSApp terminate:nil];
+}
 // quiet = triggered by the file watcher: a failed build is logged to build.log and retried on the next save, no alert.
 - (void)rebuildQuietly:(BOOL)quiet {
     NSString *dir = self.sourceDir;
     if (self.rebuilding || ![[NSFileManager defaultManager] fileExistsAtPath:[dir stringByAppendingPathComponent:@"centre"]]) return;
     self.rebuilding = YES;
     NSDate *src = [self sourceDate];
-    runShell([NSString stringWithFormat:@"cd '%@' && chmod +x centre && CENTRE_NO_LAUNCH=1 ./centre build 2>&1", dir], ^(NSString *out) {
+    runShell([NSString stringWithFormat:@"cd %@ && chmod +x centre && CENTRE_NO_LAUNCH=1 ./centre build 2>&1", shellQuote(dir)], ^(NSString *out) {
         if ([out containsString:@"Built "] && ![out containsString:@"error:"]) {
-            // Success: hand over to the fresh binary. The helper outlives us, waits, then opens the new build.
-            [self saveClipHandoff];
-            NSTask *t = [NSTask new]; t.launchPath = @"/bin/sh";
-            t.arguments = @[@"-c", [NSString stringWithFormat:@"sleep 1; open '%@'", [NSBundle mainBundle].bundlePath]];
-            [t launch];
-            [NSApp terminate:nil];
+            if (self.panel.visible || self.settings.window.visible) { self.relaunchPending = YES; return; }   // finish when you're done
+            [self relaunch];
             return;
         }
         self.rebuilding = NO; self.failedSource = src;
+        if (!self.panel) [self startNormally];                    // launch-time build failed: run the build we have
         if (quiet) { showHUDFor(@"Centre's rebuild failed — details in build.log", @"exclamationmark.triangle.fill", 4); return; }
         [NSApp activateIgnoringOtherApps:YES];
         NSAlert *al = [NSAlert new]; al.messageText = @"Centre could not rebuild";
@@ -416,7 +431,13 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 #pragma mark Lifecycle
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     if (self.snapshotDir) { [self runSnapshots]; return; }
-    if ([self sourceIsNewer]) { [self rebuild]; return; }
+    if ([self sourceIsNewer]) { [self rebuild]; return; }          // a failed build falls back to -startNormally
+    [self startNormally];
+}
+// Everything a running Centre needs. Also the fallback when a rebuild at launch fails, so you're never left
+// with a Centre that has no panel, no shortcut and no file watcher.
+- (void)startNormally {
+    if (self.panel) return;
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.y.centre.show" object:nil queue:[NSOperationQueue mainQueue]
         usingBlock:^(NSNotification *note) { [self show]; }];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -430,10 +451,13 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [self registerCommandHotKeys];
     [self updateStatusItem];
     [self scanApps];
+    self.taskbar = [[CTaskbar alloc] initWithApp:self];
+    [self.taskbar apply];
     [self startRecentFilesQuery];
     [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(pollClipboard) userInfo:nil repeats:YES];
     // Auto-rebuild: when anything in Sources/ changes, recompile and relaunch (only while the panel is hidden).
     [NSTimer scheduledTimerWithTimeInterval:4 repeats:YES block:^(NSTimer *t) {
+        if (self.relaunchPending && !self.panel.visible && !self.settings.window.visible) { [self relaunch]; return; }
         if (self.rebuilding || self.panel.visible || self.settings.window.visible || ![self sourceIsNewer]) return;
         NSDate *src = [self sourceDate];
         if (self.failedSource && src && [src isEqualToDate:self.failedSource]) return;   // same broken source: wait for the next save
@@ -441,8 +465,15 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     }];
     // Manual launch → show. A relaunch right after a rebuild stays hidden until the hotkey.
     NSDate *built = [[[NSFileManager defaultManager] attributesOfItemAtPath:[NSBundle mainBundle].executablePath error:nil] fileModificationDate];
-    if (!built || -[built timeIntervalSinceNow] > 90) [self show];
+    NSAppleEventDescriptor *ev = [NSAppleEventManager sharedAppleEventManager].currentAppleEvent;
+    BOOL atLogin = [ev paramDescriptorForKeyword:keyAEPropData].enumCodeValue == keyAELaunchedAsLogInItem;
+    if (!atLogin && (!built || -[built timeIntervalSinceNow] > 90)) [self show];     // "starts quietly in the background"
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)a hasVisibleWindows:(BOOL)f { [self show]; return NO; }
-- (void)applicationWillTerminate:(NSNotification *)n { if (self.hotKeyRef) UnregisterEventHotKey(self.hotKeyRef); [self unregisterCommandHotKeys]; }
+- (void)applicationWillTerminate:(NSNotification *)n {
+    if (self.hotKeyRef) UnregisterEventHotKey(self.hotKeyRef);
+    [self unregisterCommandHotKeys];
+    [self.settings flushEdits];
+    if (!self.rebuilding && !self.snapshotDir) [self.taskbar restoreDockNow];
+}
 @end

@@ -65,6 +65,8 @@ NSImage *prerenderIcon(NSImage *src);
 NSDictionary<NSString *, NSNumber *> *hotkeyKeyMap(void);
 NSString *prettyHotkey(NSString *spec);
 void moveFrontWindow(NSRunningApplication *app, NSString *mode);
+void setTaskbarReserve(NSScreen *screen, CGFloat height, BOOL top);   // the taskbar's strip along the bottom (or top) of that screen
+NSRect usableFrame(NSScreen *screen);                        // visibleFrame minus the taskbar
 void simulatePaste(void);
 NSImage *symSize(NSString *name, CGFloat pt);
 NSString *fmtTime(double sec);
@@ -102,6 +104,7 @@ NSColor *rgb(CGFloat r, CGFloat g, CGFloat b);
 NSArray<NSColor *> *tileColors(NSString *kind);
 NSImage *tileImage(NSString *symbol, NSString *kind);
 NSAttributedString *sectionTitle(NSString *t);
+NSColor *cSubtitle(void);
 NSImage *tintedSymbol(NSString *symbol, CGFloat pt, NSColor *color);
 NSPanel *prepareHUD(NSString *text, NSString *symbol);
 void showHUD(NSString *text, NSString *symbol);

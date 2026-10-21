@@ -116,7 +116,7 @@
         attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:14 weight:NSFontWeightRegular], NSForegroundColorAttributeName: [NSColor labelColor]}];
     NSString *one = [[sub ?: @"" stringByReplacingOccurrencesOfString:@"\n" withString:@" "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
     if (one.length) [a appendAttributedString:[[NSAttributedString alloc] initWithString:[@"   " stringByAppendingString:one]
-        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightRegular], NSForegroundColorAttributeName: [[NSColor secondaryLabelColor] colorWithAlphaComponent:0.8]}]];
+        attributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightRegular], NSForegroundColorAttributeName: cSubtitle()}]];   // an alpha-adjusted system colour can freeze to one appearance
     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.lineBreakMode = NSLineBreakByTruncatingTail;
     [a addAttribute:NSParagraphStyleAttributeName value:ps range:NSMakeRange(0, a.length)];
     _titleLabel.attributedStringValue = a;

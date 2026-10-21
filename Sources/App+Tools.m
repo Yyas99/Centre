@@ -56,7 +56,7 @@ static NSArray<NSString *> *wrapLines(NSString *s, CGFloat maxWidth) {
 
 - (NSArray<CItem *> *)defineItems:(NSString *)word {
     NSString *w = [word stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    if (!w.length) return @[mk(@"Type a word to look up", @"Uses the dictionaries built into macOS — works offline", @"Dictionary", @"character.book.closed", ^{})];
+    if (!w.length) return @[mk(@"Type a word to look up", @"Uses the dictionaries built into macOS — works offline", @"Dictionary", @"character.book.closed", nil)];
     NSString *def = (__bridge_transfer NSString *)DCSCopyTextDefinition(NULL, (__bridge CFStringRef)w, CFRangeMake(0, (CFIndex)w.length));
     NSString *url = [@"dict://" stringByAppendingString:urlEncode(w)];
     if (!def.length) {
@@ -115,10 +115,10 @@ static NSArray<NSString *> *wrapLines(NSString *s, CGFloat maxWidth) {
         start.verb = @"Start Timer";
         [r addObject:start];
     } else if (rest.length) {
-        [r addObject:mk(@"Type a duration first", @"10m · 1h30m · 90s · 25 (minutes) — then an optional label", @"Timer", @"timer", ^{})];
+        [r addObject:mk(@"Type a duration first", @"10m · 1h30m · 90s · 25 (minutes) — then an optional label", @"Timer", @"timer", nil)];
     }
     [r addObjectsFromArray:[self activeTimerItems]];
-    if (!r.count) [r addObject:mk(@"Type a duration, like timer 10m tea", @"Timers keep running while Centre is closed", @"Timer", @"timer", ^{})];
+    if (!r.count) [r addObject:mk(@"Type a duration, like timer 10m tea", @"Timers keep running while Centre is closed", @"Timer", @"timer", nil)];
     return r;
 }
 
@@ -153,7 +153,7 @@ static NSArray<NSString *> *wrapLines(NSString *s, CGFloat maxWidth) {
 - (NSArray<CItem *> *)volumeItems:(NSString *)rest {
     NSString *digits = [rest stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@" %"]];
     BOOL ok = digits.length && [digits rangeOfCharacterFromSet:[NSCharacterSet decimalDigitCharacterSet].invertedSet].location == NSNotFound;
-    if (!ok) return @[mk(@"Type a level from 0 to 100", @"vol 40 sets the volume to 40%", @"Media", @"speaker.wave.2", ^{})];
+    if (!ok) return @[mk(@"Type a level from 0 to 100", @"vol 40 sets the volume to 40%", @"Media", @"speaker.wave.2", nil)];
     NSInteger v = MIN(MAX(digits.integerValue, 0), 100);
     CItem *it = mk([NSString stringWithFormat:@"Set volume to %ld%%", (long)v], nil, @"Media", v == 0 ? @"speaker.slash.fill" : @"speaker.wave.2.fill", ^{
         osa(v == 0 ? @"set volume output volume 0" : [NSString stringWithFormat:@"set volume output volume %ld without output muted", (long)v]);

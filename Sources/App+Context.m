@@ -12,7 +12,9 @@
 static NSString *flat(NSString *s, NSUInteger max) {
     NSString *t = [[[s ?: @"" componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsJoinedByString:@" ⏎ "]
                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    return t.length > max ? [[t substringToIndex:max] stringByAppendingString:@"…"] : t;
+    if (t.length <= max) return t;
+    NSUInteger end = [t rangeOfComposedCharacterSequenceAtIndex:max].location;   // never split an emoji or accented letter
+    return [[t substringToIndex:end] stringByAppendingString:@"…"];
 }
 
 static NSDictionary *browserKinds(void) {
@@ -32,7 +34,8 @@ static NSDictionary *browserKinds(void) {
     self.contextBundleID = me ? nil : fr.bundleIdentifier;
     self.contextAppName = me ? nil : fr.localizedName;
     if (me || [self.config[@"contextActions"] isEqual:@NO] || !AXIsProcessTrusted()) return;
-    AXUIElementRef sys = AXUIElementCreateSystemWide();
+    // Ask the front app itself (a timeout set on the system-wide element would apply to every AX call Centre makes).
+    AXUIElementRef sys = AXUIElementCreateApplication(fr.processIdentifier);
     AXUIElementSetMessagingTimeout(sys, 0.12);                   // a frozen app must never delay the panel
     CFTypeRef focused = NULL;
     if (AXUIElementCopyAttributeValue(sys, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess && focused) {
@@ -58,7 +61,7 @@ static NSDictionary *browserKinds(void) {
     __weak CApp *ws = self;
     NSString *trim = [s stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     NSMutableArray *r = [NSMutableArray new];
-    NSString *tpl = self.config[@"webSearch"] ?: @"https://duckduckgo.com/?q=%s";
+    NSString *tpl = ([self.config[@"webSearch"] isKindOfClass:[NSString class]] ? self.config[@"webSearch"] : @"https://duckduckgo.com/?q=%s");
     NSString *search = [tpl stringByReplacingOccurrencesOfString:@"%s" withString:urlEncode(trim)];
     CItem *web = mk([NSString stringWithFormat:@"Search the web for “%@”", flat(trim, 46)], nil, @"Web", @"magnifyingglass", ^{ openURLString(search); });
     web.verb = @"Search";
@@ -103,7 +106,8 @@ static NSDictionary *browserKinds(void) {
 
 - (CItem *)transformItem:(NSString *)name {
     BOOL sel = NO; NSString *src = [self transformSource:&sel];
-    NSString *out = src.length ? transformText(name, src) : nil;
+    BOOL big = src.length > 100000;                                 // megabytes of log text: transform only when you choose one
+    NSString *out = (src.length && !big) ? transformText(name, src) : nil;
     BOOL same = out && [out isEqualToString:src];
     static NSDictionary *icons; static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -123,6 +127,12 @@ static NSDictionary *browserKinds(void) {
     CItem *i = mk(name, sub, @"Transform", icons[name] ?: @"wand.and.stars", nil);
     i.key = [@"tx:" stringByAppendingString:name];
     i.detail = sel ? @"Selection" : @"Clipboard";
+    if (big) {
+        i.subtitle = @"Large text · ↩ applies it";
+        i.action = ^{ NSString *o = transformText(name, src); if (o && ![o isEqualToString:src]) [ws deliverText:o paste:YES]; else NSBeep(); };
+        i.verb = sel ? @"Replace Selection" : @"Paste Result";
+        return i;
+    }
     if (out && !same) {
         i.action = ^{ [ws deliverText:out paste:YES]; };            // replaces the selection, or pastes the clipboard's new form
         i.altAction = ^{ copyText(out); showHUD([name stringByAppendingString:@" · copied"], @"doc.on.clipboard.fill"); };
@@ -135,7 +145,7 @@ static NSDictionary *browserKinds(void) {
 - (NSArray<CItem *> *)transformItems:(NSString *)q {
     NSMutableArray *r = [NSMutableArray new];
     BOOL sel = NO; NSString *src = [self transformSource:&sel];
-    if (!q.length && src.length) {
+    if (!q.length && src.length && src.length <= 100000) {
         CItem *st = mk(textStats(src), flat(src, 70), @"Transform", @"textformat.123", ^{ copyText(textStats(src)); showHUD(@"Counts copied", @"doc.on.clipboard.fill"); });
         st.detail = sel ? @"Selection" : @"Clipboard"; st.verb = @"Copy Counts"; st.score = 10000;
         [r addObject:st];
@@ -216,6 +226,7 @@ static NSDictionary *browserKinds(void) {
         if (r.activationPolicy == NSApplicationActivationPolicyRegular && r != NSRunningApplication.currentApplication && !r.terminated) [apps addObject:r];
     NSRunningApplication *front = self.previousApp;
     if (front && [apps containsObject:front]) { [apps removeObject:front]; [apps insertObject:front atIndex:0]; }
+    static NSUInteger generation; NSUInteger mine = ++generation;  // a slow older scan must not overwrite a newer one
     __weak CApp *ws = self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSMutableArray *out = [NSMutableArray new];
@@ -242,7 +253,7 @@ static NSDictionary *browserKinds(void) {
             CFRelease(ae);
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            CApp *me = ws; if (!me) return;
+            CApp *me = ws; if (!me || mine != generation) return;
             me.windowList = out;
             if (me.panel.visible && [me.modeLabel isEqualToString:@"Windows"]) [me refresh];
         });
@@ -258,6 +269,7 @@ static NSDictionary *browserKinds(void) {
     i.kind = @"Open Window"; i.detail = @"Window"; i.path = [d[@"path"] length] ? d[@"path"] : nil; i.verb = @"Switch to Window";
     i.action = ^{
         AXUIElementRef w = (__bridge AXUIElementRef)win;
+        AXUIElementSetMessagingTimeout(w, 0.5);                  // a hung app can't freeze Centre
         if (mini) AXUIElementSetAttributeValue(w, kAXMinimizedAttribute, kCFBooleanFalse);
         AXUIElementPerformAction(w, kAXRaiseAction);
         AXUIElementSetAttributeValue(w, kAXMainAttribute, kCFBooleanTrue);
@@ -265,6 +277,7 @@ static NSDictionary *browserKinds(void) {
     };
     i.altAction = ^{
         AXUIElementRef w = (__bridge AXUIElementRef)win; CFTypeRef btn = NULL;
+        AXUIElementSetMessagingTimeout(w, 0.5);
         if (AXUIElementCopyAttributeValue(w, kAXCloseButtonAttribute, &btn) == kAXErrorSuccess && btn) { AXUIElementPerformAction((AXUIElementRef)btn, kAXPressAction); CFRelease(btn); }
         else showHUD(@"That window can't be closed from here", @"exclamationmark.circle.fill");
     };
@@ -277,7 +290,7 @@ static NSDictionary *browserKinds(void) {
         CItem *g = mk(@"Allow Accessibility to switch windows", @"Centre reads window titles through Accessibility", @"Centre", @"hand.raised", nil);
         __weak CApp *ws = self; g.action = ^{ [ws grantAX]; }; return @[g];
     }
-    if (!self.windowList) return @[mk(@"Reading windows…", nil, @"Open Window", @"macwindow.on.rectangle", ^{})];
+    if (!self.windowList) return @[mk(@"Reading windows…", nil, @"Open Window", @"macwindow.on.rectangle", nil)];
     NSMutableArray *r = [NSMutableArray new];
     NSUInteger order = 0;
     for (NSDictionary *d in self.windowList) {
@@ -287,7 +300,7 @@ static NSDictionary *browserKinds(void) {
         [r addObject:i];
     }
     [r sortUsingComparator:^NSComparisonResult(CItem *a, CItem *b) { return a.score > b.score ? NSOrderedAscending : a.score < b.score ? NSOrderedDescending : NSOrderedSame; }];
-    if (!r.count) [r addObject:mk(q.length ? @"No window matches" : @"No open windows", @"Windows on other Spaces may not be listed", @"Open Window", @"macwindow", ^{})];
+    if (!r.count) [r addObject:mk(q.length ? @"No window matches" : @"No open windows", @"Windows on other Spaces may not be listed", @"Open Window", @"macwindow", nil)];
     if (r.count > kMaxRows) [r removeObjectsInRange:NSMakeRange(kMaxRows, r.count - kMaxRows)];
     return r;
 }
@@ -308,7 +321,7 @@ static NSDictionary *browserKinds(void) {
 - (NSArray<CItem *> *)portItems:(NSString *)port {
     NSInteger p = port.integerValue;
     if (p <= 0 || p > 65535 || [port rangeOfCharacterFromSet:[NSCharacterSet decimalDigitCharacterSet].invertedSet].location != NSNotFound)
-        return @[mk(@"Type a port number", @"port 3000 shows what's listening and lets you stop it", @"Port", @"network", ^{})];
+        return @[mk(@"Type a port number", @"port 3000 shows what's listening and lets you stop it", @"Port", @"network", nil)];
     NSString *issued = self.currentQuery;
     __weak CApp *ws = self;
     runShell([NSString stringWithFormat:@"/usr/sbin/lsof -nP -iTCP:%ld -sTCP:LISTEN -Fpc 2>/dev/null", (long)p], ^(NSString *out) {
@@ -323,10 +336,10 @@ static NSDictionary *browserKinds(void) {
             i.altHint = @"⌘↩ Force Stop"; i.verb = @"Stop Process";
             [r addObject:i];
         }
-        if (!r.count) [r addObject:mk([NSString stringWithFormat:@"Nothing is listening on port %ld", (long)p], @"The port is free", @"Port", @"checkmark.circle", ^{})];
+        if (!r.count) [r addObject:mk([NSString stringWithFormat:@"Nothing is listening on port %ld", (long)p], @"The port is free", @"Port", @"checkmark.circle", nil)];
         me.items = r; me.selected = 0; [me reloadTable];
     });
-    return @[mk([NSString stringWithFormat:@"Checking port %ld…", (long)p], nil, @"Port", @"network", ^{})];
+    return @[mk([NSString stringWithFormat:@"Checking port %ld…", (long)p], nil, @"Port", @"network", nil)];
 }
 
 #pragma mark Emoji (:smile or emoji heart)
@@ -369,7 +382,7 @@ static NSDictionary *browserKinds(void) {
     }
     [r sortUsingComparator:^NSComparisonResult(CItem *a, CItem *b) { return a.score > b.score ? NSOrderedAscending : a.score < b.score ? NSOrderedDescending : NSOrderedSame; }];
     if (r.count > kMaxRows) [r removeObjectsInRange:NSMakeRange(kMaxRows, r.count - kMaxRows)];
-    if (!r.count) [r addObject:mk(@"No emoji by that name", @"Try a simpler word: heart, fire, smile", @"Emoji", @"face.smiling", ^{})];
+    if (!r.count) [r addObject:mk(@"No emoji by that name", @"Try a simpler word: heart, fire, smile", @"Emoji", @"face.smiling", nil)];
     return r;
 }
 

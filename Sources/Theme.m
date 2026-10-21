@@ -33,6 +33,17 @@ static NSColor *sectionColor(void) {
     });
     return c;
 }
+// Row subtitles: a step quieter than secondary text, resolved per appearance at draw time.
+NSColor *cSubtitle(void) {
+    static NSColor *c; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        c = [NSColor colorWithName:@"CentreSubtitle" dynamicProvider:^NSColor *(NSAppearance *ap) {
+            BOOL dark = [ap bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
+            return dark ? [NSColor colorWithWhite:1 alpha:0.46] : [NSColor colorWithWhite:0 alpha:0.48];
+        }];
+    });
+    return c;
+}
 // Section headers: small, tracked capitals, quieter than content so the eye lands on items first.
 NSAttributedString *sectionTitle(NSString *t) {
     return [[NSAttributedString alloc] initWithString:(t ?: @"").uppercaseString attributes:@{

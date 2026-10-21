@@ -1,6 +1,7 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "App.h"
 #import "Settings.h"
+#import "Taskbar.h"
 
 @implementation CApp (Snapshots)
 
@@ -56,6 +57,11 @@
         self.hasNow = YES; self.nowTitle = @"Midnight City"; self.nowArtist = @"M83"; self.nowApp = @"Music"; self.nowArt = art;
         self.nowDuration = 243; self.nowElapsed = 71; self.nowStamp = [NSDate date]; self.nowRate = 1; self.isPlaying = YES;
         self.field.stringValue = @""; [self refresh]; [self updateMediaView];
+        if ([mode isEqualToString:@"dark"]) {                  // warm-up pass: some app icons (Photos) load lazily on first draw
+            [self snapshotView:self.panel.contentView name:@"home-warmup" radius:kRadius];
+            [[NSFileManager defaultManager] removeItemAtPath:[self.snapshotDir stringByAppendingPathComponent:@"home-warmup.png"] error:nil];
+            [self refresh]; [self updateMediaView];
+        }
         [self snapshotView:self.panel.contentView name:[@"home-" stringByAppendingString:mode] radius:kRadius];
         self.hasNow = NO;
         if (![mode isEqualToString:@"dark"]) continue;
@@ -64,7 +70,35 @@
             self.field.stringValue = q[0]; [self refresh]; [self stopFileSearch];
             [self snapshotView:self.panel.contentView name:q[1] radius:kRadius];
         }
+        // Context: text selected in another app, and what Centre offers for it
+        self.selectedText = @"Meeting moved to 3:30 pm, room 4.12"; self.contextAppName = @"Notes"; self.contextBundleID = @"com.apple.Notes";
+        self.field.stringValue = @""; [self refresh];
+        [self snapshotView:self.panel.contentView name:@"home-selection" radius:kRadius];
+        self.field.stringValue = @"tx"; [self refresh]; [self stopFileSearch];
+        [self snapshotView:self.panel.contentView name:@"transform" radius:kRadius];
+        self.selectedText = nil; self.contextAppName = nil; self.contextBundleID = nil;
+        // Settings › Commands with example commands (in memory only)
+        CSettings *st = [[CSettings alloc] initWithApp:self]; [st useSampleData];
+        st.window.appearance = NSApp.appearance;
+        [st showPageNamed:@"Commands"];
+        [self snapshotView:st.window.contentView name:@"settings-commands" radius:0];
+        [st showPageNamed:@"Taskbar"];
+        [self snapshotView:st.window.contentView name:@"settings-taskbar" radius:0];
     }
+    // The taskbar, dark and light, with neutral apps
+    self.taskbar = [[CTaskbar alloc] initWithApp:self];
+    NSArray *apps = @[@"/System/Library/CoreServices/Finder.app", @"/Applications/Safari.app", @"/System/Applications/Mail.app", @"/System/Applications/Notes.app",
+                      @"/System/Applications/Calendar.app", @"/System/Applications/Music.app", @"/System/Applications/Photos.app",
+                      @"/System/Applications/Utilities/Terminal.app", @"/System/Applications/System Settings.app"];
+    [self.taskbar useSampleApps:apps running:@[apps[0], apps[1], apps[3], apps[5]] active:apps[1]];
+    self.hasNow = YES; self.nowTitle = @"Midnight City"; self.nowArtist = @"M83"; self.nowApp = @"Music"; self.nowArt = art; self.isPlaying = YES;
+    for (NSString *mode in @[@"dark", @"light"]) {
+        NSApp.appearance = [NSAppearance appearanceNamed:[mode isEqualToString:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+        NSView *bar = [self.taskbar snapshotView];
+        bar.window.appearance = NSApp.appearance;
+        [self snapshotView:bar name:[@"taskbar-" stringByAppendingString:mode] radius:14];
+    }
+    self.hasNow = NO;
 }
 - (void)snapshotAll {
     if (self.readmeMode) { [self readmeShots]; return; }
@@ -102,9 +136,26 @@
         self.field.stringValue = q[0]; [self refresh]; [self stopFileSearch];
         [self snapshotView:self.panel.contentView name:q[1] radius:kRadius];
     }
+    // Taskbar, dark and light, with something playing
+    self.taskbar = [[CTaskbar alloc] initWithApp:self];
+    self.hasNow = YES; self.nowTitle = @"Midnight City"; self.nowArtist = @"M83"; self.nowApp = @"Music"; self.isPlaying = YES;
+    for (NSString *mode in @[@"dark", @"light"]) {
+        NSView *bar = [self.taskbar snapshotView];
+        bar.window.appearance = [NSAppearance appearanceNamed:[mode isEqualToString:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+        [bar setNeedsDisplay:YES]; for (NSView *s in bar.subviews) [s setNeedsDisplay:YES];
+        [self snapshotView:bar name:[mode stringByAppendingString:@"-50-taskbar"] radius:14];
+    }
+    NSDictionary *realConfig = self.config;                         // variants: names + edge-to-edge (in memory only, never saved)
+    NSMutableDictionary *vc = [self.config mutableCopy]; vc[@"taskbarLabels"] = @YES; vc[@"taskbarFloating"] = @NO; vc[@"taskbarSize"] = @"compact";
+    self.config = vc;
+    NSView *named = [self.taskbar snapshotView];
+    named.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+    [self snapshotView:named name:@"dark-51-taskbar-names" radius:0];
+    self.config = realConfig;
+    self.hasNow = NO;
     CSettings *st = [[CSettings alloc] initWithApp:self]; [st useSampleData];
     st.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    for (NSArray *pg in @[@[@"Home", @"dark-40-set-home"], @[@"Commands", @"dark-41-set-commands"], @[@"Snippets", @"dark-42-set-snippets"], @[@"Shortcuts", @"dark-43-set-shortcuts"]]) {
+    for (NSArray *pg in @[@[@"Taskbar", @"dark-44-set-taskbar"], @[@"Home", @"dark-40-set-home"], @[@"Commands", @"dark-41-set-commands"], @[@"Snippets", @"dark-42-set-snippets"], @[@"Shortcuts", @"dark-43-set-shortcuts"]]) {
         [st showPageNamed:pg[0]];
         [self snapshotView:st.window.contentView name:pg[1] radius:0];
     }

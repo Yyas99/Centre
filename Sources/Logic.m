@@ -145,9 +145,10 @@ NSString *expandSnippet(NSString *text, NSString *clipboard, NSDate *now) {
     NSDictionary *map = @{ @"{date}": [fmt(@"d MMMM yyyy") stringFromDate:now], @"{iso}": [fmt(@"yyyy-MM-dd") stringFromDate:now],
                            @"{time}": [[fmt(@"h:mm a") stringFromDate:now] lowercaseString],
                            @"{datetime}": [NSString stringWithFormat:@"%@ %@", [fmt(@"d MMM yyyy") stringFromDate:now], [[fmt(@"h:mm a") stringFromDate:now] lowercaseString]],
-                           @"{weekday}": [fmt(@"EEEE") stringFromDate:now], @"{clipboard}": clipboard ?: @"",
-                           @"{uuid}": [NSUUID UUID].UUIDString.lowercaseString };
+                           @"{weekday}": [fmt(@"EEEE") stringFromDate:now], @"{uuid}": [NSUUID UUID].UUIDString.lowercaseString };
     for (NSString *k in map) [o replaceOccurrencesOfString:k withString:map[k] options:NSCaseInsensitiveSearch range:NSMakeRange(0, o.length)];
+    // Last, so a clipboard that happens to contain "{date}" is pasted as written
+    [o replaceOccurrencesOfString:@"{clipboard}" withString:clipboard ?: @"" options:NSCaseInsensitiveSearch range:NSMakeRange(0, o.length)];
     return o;
 }
 

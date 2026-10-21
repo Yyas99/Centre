@@ -6,7 +6,9 @@
 static NSString *oneLine(NSString *s, NSUInteger max) {
     NSString *t = [[[s ?: @"" componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]] componentsJoinedByString:@" "]
                    stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-    return t.length > max ? [[t substringToIndex:max] stringByAppendingString:@"…"] : t;
+    if (t.length <= max) return t;
+    NSUInteger end = [t rangeOfComposedCharacterSequenceAtIndex:max].location;   // never split an emoji or accented letter
+    return [[t substringToIndex:end] stringByAppendingString:@"…"];
 }
 
 @implementation CApp (Library)
@@ -20,13 +22,27 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
         if ([d isKindOfClass:[NSDictionary class]] && [d[@"id"] isKindOfClass:[NSString class]]) [r addObject:d];
     return r;
 }
+// config.json can be hand-edited: keep only string values for the fields Centre reads, so a stray number or null can't crash it.
+static NSDictionary *stringFields(NSDictionary *d, NSArray<NSString *> *keys) {
+    NSMutableDictionary *r = [NSMutableDictionary dictionaryWithObject:d[@"id"] forKey:@"id"];
+    for (NSString *k in keys) if ([d[k] isKindOfClass:[NSString class]]) r[k] = d[k];
+    return r;
+}
 - (NSArray<NSDictionary *> *)customCommands {
-    return [[self configList:@"commands"] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *c, id _) {
-        return [c[@"name"] isKindOfClass:[NSString class]] && [c[@"name"] length]; }]];
+    NSMutableArray *r = [NSMutableArray new];
+    for (NSDictionary *c in [self configList:@"commands"]) {
+        NSDictionary *s = stringFields(c, @[@"name", @"type", @"script", @"output", @"icon", @"keywords"]);
+        if ([s[@"name"] length]) [r addObject:s];
+    }
+    return r;
 }
 - (NSArray<NSDictionary *> *)snippets {
-    return [[self configList:@"snippets"] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *s, id _) {
-        return [s[@"text"] isKindOfClass:[NSString class]] && ([s[@"name"] length] || [s[@"keyword"] length]); }]];
+    NSMutableArray *r = [NSMutableArray new];
+    for (NSDictionary *d in [self configList:@"snippets"]) {
+        NSDictionary *s = stringFields(d, @[@"name", @"keyword", @"text"]);
+        if (s[@"text"] && ([s[@"name"] length] || [s[@"keyword"] length])) [r addObject:s];
+    }
+    return r;
 }
 
 #pragma mark Delivering text
@@ -37,7 +53,14 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
     if (!s.length) { showHUD(@"Nothing to paste", @"exclamationmark.circle.fill"); return; }
     NSPasteboard *pb = [NSPasteboard generalPasteboard];
     BOOL canPaste = paste && AXIsProcessTrusted() && self.previousApp && !self.previousApp.terminated;
-    NSString *before = canPaste ? [pb stringForType:NSPasteboardTypeString] : nil;
+    // Save every type on the clipboard (images, files, rich text), not just its plain text, to put back afterwards.
+    NSMutableArray<NSPasteboardItem *> *saved = [NSMutableArray new];
+    if (canPaste) for (NSPasteboardItem *it in pb.pasteboardItems) {
+        NSPasteboardItem *c = [NSPasteboardItem new];
+        for (NSString *t in it.types) { NSData *d = [it dataForType:t]; if (d) [c setData:d forType:t]; }
+        [saved addObject:c];
+    }
+    BOOL secret = [pb.types containsObject:@"org.nspasteboard.ConcealedType"];
     [pb clearContents];
     [pb setString:s forType:NSPasteboardTypeString];
     if (canPaste) [pb setString:@"" forType:@"org.nspasteboard.TransientType"];
@@ -48,9 +71,13 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
         simulatePaste();
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.9 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             NSPasteboard *p = [NSPasteboard generalPasteboard];
-            if (p.changeCount != mine || !before) return;          // you copied something new meanwhile: leave it
-            [p clearContents]; [p setString:before forType:NSPasteboardTypeString];
-            [p setString:@"" forType:@"org.nspasteboard.TransientType"];
+            if (p.changeCount != mine || !saved.count) return;     // you copied something new meanwhile: leave it
+            [p clearContents]; [p writeObjects:saved];
+            if (secret) {                                           // a generated password still clears itself
+                NSInteger cc = p.changeCount;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(90 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    if ([NSPasteboard generalPasteboard].changeCount == cc) [[NSPasteboard generalPasteboard] clearContents]; });
+            }
         });
     });
 }
@@ -132,8 +159,11 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
     }
     BOOL as = [type isEqualToString:@"applescript"];
     NSString *clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString] ?: @"";
-    NSString *code = [script stringByReplacingOccurrencesOfString:@"{query}" withString:as ? appleScriptQuote(arg) : shellQuote(arg)];
-    code = [code stringByReplacingOccurrencesOfString:@"{clipboard}" withString:as ? appleScriptQuote(clip) : shellQuote(clip)];
+    // Shell: the values go in as variables, and the placeholders become quoted references to them. An expanded
+    // variable is never parsed again as code, so text like $(…) in your clipboard can't run, whatever quotes surround it.
+    NSString *code = [script stringByReplacingOccurrencesOfString:@"{query}" withString:as ? appleScriptQuote(arg) : @"\"${CENTRE_QUERY}\""];
+    code = [code stringByReplacingOccurrencesOfString:@"{clipboard}" withString:as ? appleScriptQuote(clip) : @"\"${CENTRE_CLIP}\""];
+    if (!as) code = [NSString stringWithFormat:@"CENTRE_QUERY=%@; CENTRE_CLIP=%@; %@", shellQuote(arg), shellQuote(clip), code];
     if (!as && [output isEqualToString:@"terminal"]) {
         osa([NSString stringWithFormat:@"tell application \"Terminal\"\nactivate\ndo script %@\nend tell", appleScriptQuote(code)]);
         return;
@@ -286,7 +316,7 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
 }
 
 - (NSString *)pinKeyFor:(CItem *)i {
-    if (!i || [i.kind isEqualToString:@"Open Window"] || [i.kind isEqualToString:@"Context"]) return nil;
+    if (!i || [i.kind isEqualToString:@"Open Window"] || [i.kind isEqualToString:@"Context"] || [i.kind isEqualToString:@"Process"]) return nil;
     if (i.key.length) return i.key;
     if (i.path.length) return i.path;
     return nil;
@@ -330,7 +360,7 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
 - (BOOL)isPinned:(CItem *)i { NSString *k = [self pinKeyFor:i]; return k && [[self pinnedKeys] containsObject:k]; }
 
 - (void)setPinnedKeys:(NSArray<NSString *> *)keys {
-    NSMutableDictionary *c = [self.config mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableDictionary *c = [self mutableConfig];
     c[@"pinned"] = keys ?: @[];
     [self writeConfig:c];
 }
@@ -392,7 +422,7 @@ static NSString *oneLine(NSString *s, NSUInteger max) {
         return;
     }
     self.hotKeyArmedKey = nil;
-    [self recordUse:key];
+    if (![key hasPrefix:@"/"]) [self recordUse:key];            // apps and folders record their own use when they open
     i.action();
 }
 

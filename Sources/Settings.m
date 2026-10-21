@@ -1,6 +1,7 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "Settings.h"
 #import "App.h"
+#import "Taskbar.h"
 
 #pragma mark - Settings window (System Settings–style)
 
@@ -265,6 +266,7 @@ static NSTextField *setField(NSString *value, NSString *placeholder, CGFloat wid
 static NSArray *settingsPages(void) {
     return @[@[@"General", @"gearshape.fill", @"System", @"Your shortcut, startup and what Centre remembers.", @""],
              @[@"Home", @"house.fill", @"Clipboard", @"What you see the moment Centre opens.", @""],
+             @[@"Taskbar", @"dock.rectangle", @"Context", @"A floating bar for your apps, tray and clock.", @""],
              @[@"Search", @"magnifyingglass", @"Web", @"Where searches go when nothing on your Mac matches.", @""],
              @[@"Commands", @"terminal.fill", @"Script", @"Scripts and flows that run like built-in commands.", @"Make It Yours"],
              @[@"Snippets", @"text.quote", @"Snippet", @"Text you paste anywhere in a keystroke.", @""],
@@ -370,6 +372,7 @@ static NSArray *searchEngines(void) {
 }
 
 - (void)show {
+    if (self.window.visible) [self flushEdits];              // reopening must not throw away the last half-second of typing
     [self.app loadConfig];
     [self loadModel];
     [self showPage:self.page];
@@ -414,6 +417,7 @@ static NSArray *searchEngines(void) {
     NSString *name = settingsPages()[i][0];
     if ([name isEqualToString:@"General"]) [self buildGeneral];
     else if ([name isEqualToString:@"Home"]) [self buildHomePage];
+    else if ([name isEqualToString:@"Taskbar"]) [self buildTaskbar];
     else if ([name isEqualToString:@"Search"]) [self buildSearch];
     else if ([name isEqualToString:@"Commands"]) [self buildCommands];
     else if ([name isEqualToString:@"Snippets"]) [self buildSnippets];
@@ -583,7 +587,7 @@ static OSStatus automationStatus(void) {
 - (void)setupSigning:(NSButton *)b {
     b.enabled = NO; b.title = @"Setting up…";
     __weak CSettings *ws = self;
-    runShell([NSString stringWithFormat:@"cd '%@' && /bin/bash ./setup-signing.sh 2>&1 | tee signing.log", [self.app sourceDir]], ^(NSString *out) {
+    runShell([NSString stringWithFormat:@"cd %@ && /bin/bash ./setup-signing.sh 2>&1 | tee signing.log", shellQuote([self.app sourceDir])], ^(NSString *out) {
         if ([out containsString:@"Signing identity ready."]) { [ws.app rebuild]; return; }   // re-sign with it and relaunch
         [NSApp activateIgnoringOtherApps:YES];
         NSAlert *al = [NSAlert new]; al.messageText = @"Couldn't set up signing";
@@ -733,6 +737,99 @@ static NSString *keyKind(NSString *k) {
 }
 - (void)resetPins:(id)s { [self.app setPinnedKeys:[self.app defaultPins]]; [self showPage:self.page]; }
 
+#pragma mark Taskbar
+
+// A pop-up whose items map to config values; saved like a switch.
+- (NSPopUpButton *)choice:(NSArray<NSArray<NSString *> *> *)pairs key:(NSString *)key fallback:(NSString *)def {
+    NSString *cur = [self.app.config[key] isKindOfClass:[NSString class]] ? self.app.config[key] : def;
+    NSPopUpButton *p = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
+    for (NSArray *pr in pairs) { [p addItemWithTitle:pr[0]]; p.lastItem.representedObject = pr[1]; if ([pr[1] isEqualToString:cur]) [p selectItem:p.lastItem]; }
+    p.identifier = key; p.target = self; p.action = @selector(choiceChanged:);
+    return p;
+}
+- (void)choiceChanged:(NSPopUpButton *)p {
+    [self saveKey:p.identifier value:p.selectedItem.representedObject];
+    dispatch_async(dispatch_get_main_queue(), ^{ [self showPage:self.page]; });   // subtitles describe the current choice
+}
+
+- (void)buildTaskbar {
+    CTaskbar *tb = self.app.taskbar;
+    NSDictionary *c = self.app.config;
+    [self addHeader:@"Bar" note:nil];
+    BOOL top = [c[@"taskbarPosition"] isEqual:@"top"];
+    [self addFull:setCard(@[setRow(@"Show the taskbar", @"On your main display, on every Space. Hidden while an app is full screen.", [self switchFor:@"taskbarEnabled" fallback:YES]),
+                            setRow(@"Position", top ? @"Just under the menu bar." : @"Along the bottom, above the Dock while the Dock shows.",
+                                   [self choice:@[@[@"Bottom", @"bottom"], @[@"Top", @"top"]] key:@"taskbarPosition" fallback:@"bottom"]),
+                            setRow(@"Size", nil, [self choice:@[@[@"Compact", @"compact"], @[@"Standard", @"normal"], @[@"Large", @"large"]] key:@"taskbarSize" fallback:@"normal"]),
+                            setRow(@"Floating", @"Rounded, with a gap from the screen edge. Off: edge to edge.", [self switchFor:@"taskbarFloating" fallback:YES]),
+                            setRow(@"Auto-hide", top ? @"Slides away until the pointer reaches the menu bar." : @"Slides away until the pointer touches the bottom edge.", [self switchFor:@"taskbarAutoHide" fallback:NO])])];
+    [self gap];
+
+    NSString *dock = [c[@"taskbarDock"] isKindOfClass:[NSString class]] ? c[@"taskbarDock"] : @"keep";
+    NSString *dockNote = [dock isEqualToString:@"off"] ? @"Never shows. Restored when you turn the bar off."
+                       : [dock isEqualToString:@"autohide"] ? @"Slides up only when you point at the bottom edge."
+                       : @"Left exactly as you set it in System Settings.";
+    [self addHeader:@"macOS Dock" note:@"Centre remembers your own Dock settings and puts them back when the taskbar is off or Centre quits."];
+    [self addFull:setCard(@[setRow(@"While the taskbar is on, the Dock", dockNote,
+                                   [self choice:@[@[@"Stays as it is", @"keep"], @[@"Hides automatically", @"autohide"], @[@"Is turned off", @"off"]] key:@"taskbarDock" fallback:@"keep"])])];
+    [self gap];
+
+    [self addHeader:@"Apps" note:nil];
+    [self addFull:setCard(@[setRow(@"Show app names", @"Icon and name for each app, like a classic task list.", [self switchFor:@"taskbarLabels" fallback:NO])])];
+    [self gap];
+
+    [self addHeader:@"Tray" note:@"Scroll on the speaker to change the volume; click it to mute. Click the clock for a calendar. Right-click anything in the tray for its settings."];
+    [self addFull:setCard(@[setRow(@"Now playing", @"Artwork and title; click to play or pause.", [self switchFor:@"taskbarMedia" fallback:YES]),
+                            setRow(@"Volume", nil, [self switchFor:@"taskbarVolume" fallback:YES]),
+                            setRow(@"Wi-Fi", nil, [self switchFor:@"taskbarWifi" fallback:YES]),
+                            setRow(@"Battery", @"Percentage beside the icon.", [self switchFor:@"taskbarBattery" fallback:YES]),
+                            setRow(@"Date under the time", nil, [self switchFor:@"taskbarDate" fallback:YES]),
+                            setRow(@"24-hour time", nil, [self switchFor:@"taskbar24h" fallback:NO]),
+                            setRow(@"Seconds", nil, [self switchFor:@"taskbarSeconds" fallback:NO]),
+                            setRow(@"Show desktop button", @"At the far end: hides every app, click again to bring them back.", [self switchFor:@"taskbarDesktop" fallback:YES])])];
+    [self gap];
+    [self addHeader:@"Pinned apps" note:@"Drag icons on the taskbar to reorder them. Right-click any app there to pin, unpin, hide, quit or jump to one of its windows."];
+    NSArray *pins = tb ? [tb pinnedPaths] : @[];
+    NSMutableArray *rows = [NSMutableArray new];
+    for (NSUInteger i = 0; i < pins.count; i++) {
+        NSButton *up = [self iconButton:@"chevron.up" tip:@"Move left" action:@selector(moveBarPin:) tag:(NSInteger)i];
+        NSButton *down = [self iconButton:@"chevron.down" tip:@"Move right" action:@selector(moveBarPin:) tag:(NSInteger)i];
+        NSButton *rm = [self iconButton:@"minus.circle" tip:@"Unpin" action:@selector(removeBarPin:) tag:(NSInteger)i];
+        up.identifier = @"up"; down.identifier = @"down"; up.enabled = i > 0; down.enabled = i + 1 < pins.count;
+        NSStackView *ctl = [NSStackView stackViewWithViews:@[up, down, rm]]; ctl.spacing = 4;
+        NSString *p = pins[i];
+        [rows addObject:setRow([[NSFileManager defaultManager] displayNameAtPath:p].stringByDeletingPathExtension, [p.stringByDeletingLastPathComponent stringByAbbreviatingWithTildeInPath], ctl)];
+    }
+    if (!rows.count) [rows addObject:setRow(@"Nothing pinned", @"Running apps still appear; pin the ones you want to keep.", nil)];
+    [self addFull:setCard(rows)];
+    [self.pageStack setCustomSpacing:10 afterView:self.pageStack.arrangedSubviews.lastObject];
+    NSPopUpButton *add = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:YES];
+    [add addItemWithTitle:@"Add App…"];
+    for (CItem *a in [self.app.apps sortedArrayUsingComparator:^NSComparisonResult(CItem *x, CItem *y) { return [x.title localizedCaseInsensitiveCompare:y.title]; }]) {
+        if (![a.path hasPrefix:@"/"] || [pins containsObject:a.path]) continue;
+        NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle:a.title action:@selector(addBarPin:) keyEquivalent:@""]; mi.target = self; mi.representedObject = a.path;
+        NSImage *ic = [[[NSWorkspace sharedWorkspace] iconForFile:a.path] copy]; ic.size = NSMakeSize(16, 16); mi.image = ic;
+        [add.menu addItem:mi];
+    }
+    [self.pageStack addArrangedSubview:[self toolbar:@[add, [self button:@"Match the Dock" target:self action:@selector(resetBarPins:)]]]];
+}
+- (void)moveBarPin:(NSButton *)b {
+    NSMutableArray *k = [[self.app.taskbar pinnedPaths] mutableCopy]; NSInteger i = b.tag, j = i + ([b.identifier isEqualToString:@"up"] ? -1 : 1);
+    if (i < 0 || j < 0 || i >= (NSInteger)k.count || j >= (NSInteger)k.count) return;
+    [k exchangeObjectAtIndex:(NSUInteger)i withObjectAtIndex:(NSUInteger)j];
+    [self.app.taskbar setPinnedPaths:k]; [self showPage:self.page];
+}
+- (void)removeBarPin:(NSButton *)b {
+    NSMutableArray *k = [[self.app.taskbar pinnedPaths] mutableCopy];
+    if (b.tag < 0 || b.tag >= (NSInteger)k.count) return;
+    [k removeObjectAtIndex:(NSUInteger)b.tag]; [self.app.taskbar setPinnedPaths:k]; [self showPage:self.page];
+}
+- (void)addBarPin:(NSMenuItem *)mi {
+    NSMutableArray *k = [[self.app.taskbar pinnedPaths] mutableCopy];
+    if (![k containsObject:mi.representedObject]) [k addObject:mi.representedObject];
+    [self.app.taskbar setPinnedPaths:k]; [self showPage:self.page];
+}
+- (void)resetBarPins:(id)s { [self.app.taskbar setPinnedPaths:[self.app.taskbar defaultPins]]; [self showPage:self.page]; }
 #pragma mark Commands and snippets (cards edited in place, saved as you type)
 
 - (NSStackView *)cardStack:(NSArray<NSView *> *)views {
@@ -809,6 +906,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
         NSTextField *icon = setField(c[@"icon"], @"Icon (SF Symbol name)", 170, self, @selector(listFieldChanged:)); icon.identifier = [cid stringByAppendingString:@"|icon|cmd"];
         NSTextField *kw = setField(c[@"keywords"], @"Other words that find it", 220, self, @selector(listFieldChanged:)); kw.identifier = [cid stringByAppendingString:@"|keywords|cmd"];
         NSImageView *preview = [NSImageView imageViewWithImage:tileImage([self.app iconForCommand:c], flow ? @"Flow" : @"Script")];
+        preview.identifier = [cid stringByAppendingString:@"|preview"];
         [preview.widthAnchor constraintEqualToConstant:22].active = YES; [preview.heightAnchor constraintEqualToConstant:22].active = YES;
         NSStackView *r2 = [NSStackView stackViewWithViews:@[preview, icon, kw]]; r2.spacing = 8;
         NSScrollView *script = [self scriptView:c[@"script"] ident:[cid stringByAppendingString:@"|script|cmd"] height:flow ? 104 : 88 mono:YES];
@@ -858,9 +956,14 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
 - (void)listFieldChanged:(NSTextField *)f {
     NSString *v = [f.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if ([f.identifier containsString:@"|name|"] && !v.length) v = @"Untitled";
+    NSArray *p = [f.identifier componentsSeparatedByString:@"|"];
+    NSString *old = p.count == 3 ? ([self entry:p[0] in:[self listFor:p[2]]][p[1]] ?: @"") : @"";
+    if ([old isEqualToString:v]) return;                            // leaving a field unchanged does nothing
     [self setListValue:v forIdentifier:f.identifier];
-    if ([f.identifier containsString:@"|icon|"]) {                 // refresh the icon preview (deferred: never rebuild mid-rebuild)
-        [self saveLists]; dispatch_async(dispatch_get_main_queue(), ^{ [self showPage:self.page]; });
+    if ([p[1] isEqualToString:@"icon"]) {                           // update the preview tile in place (no page rebuild under your cursor)
+        NSImageView *pv = (NSImageView *)[self viewWithIdentifier:[p[0] stringByAppendingString:@"|preview"] in:self.doc];
+        NSDictionary *c = [self entry:p[0] in:self.commands];
+        if (pv && c) pv.image = tileImage([self.app iconForCommand:c], [c[@"type"] isEqual:@"flow"] ? @"Flow" : @"Script");
     }
 }
 - (void)listPopupChanged:(NSPopUpButton *)p {
@@ -878,7 +981,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
     self.saveTimer = [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:NO block:^(NSTimer *t) { ws.saveTimer = nil; [ws saveLists]; }];
 }
 - (void)saveLists {
-    NSMutableDictionary *c = [self.app.config mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableDictionary *c = [self.app mutableConfig];
     c[@"commands"] = [self.commands copy]; c[@"snippets"] = [self.snips copy];
     [self.app writeConfig:c];
 }
@@ -926,7 +1029,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
         if (r != NSAlertFirstButtonReturn) return;
         [list removeObject:d];
         NSString *key = [([p[1] isEqualToString:@"snip"] ? @"snip:" : @"custom:") stringByAppendingString:p[0]];
-        NSMutableDictionary *c = [self.app.config mutableCopy] ?: [NSMutableDictionary new];
+        NSMutableDictionary *c = [self.app mutableConfig];
         c[@"commands"] = [self.commands copy]; c[@"snippets"] = [self.snips copy];
         NSMutableArray *pins = [[self.app pinnedKeys] mutableCopy]; [pins removeObject:key]; c[@"pinned"] = pins;
         NSMutableDictionary *hk = [([c[@"hotkeys"] isKindOfClass:[NSDictionary class]] ? c[@"hotkeys"] : @{}) mutableCopy]; [hk removeObjectForKey:key]; c[@"hotkeys"] = hk;
@@ -1096,12 +1199,12 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
 #pragma mark Saving
 
 - (void)saveKey:(NSString *)k value:(id)v {
-    NSMutableDictionary *c = [self.app.config mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableDictionary *c = [self.app mutableConfig];
     if (v) c[k] = v; else [c removeObjectForKey:k];
     [self.app writeConfig:c];
 }
 - (void)saveTables {
-    NSMutableDictionary *c = [self.app.config mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableDictionary *c = [self.app mutableConfig];
     NSMutableDictionary *sp = [NSMutableDictionary new];
     for (NSArray *r in self.prefixes) { NSString *k = r.count > 0 ? r[0] : @"", *u = r.count > 1 ? r[1] : @""; if (k.length && u.length > 8) sp[k] = u; }
     c[@"searchPrefixes"] = sp;
@@ -1110,7 +1213,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
     c[@"links"] = links;
     NSMutableArray *folders = [NSMutableArray new];
     for (NSArray *r in self.folders) { NSString *f = r.count > 0 ? r[0] : @""; if (f.length) [folders addObject:f]; }
-    if (folders.count) c[@"appFolders"] = folders;
+    c[@"appFolders"] = folders;                            // empty means "the default folders" (see -scanApps)
     [self.app writeConfig:c];
 }
 
@@ -1150,7 +1253,13 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
 
 #pragma mark Window
 
+- (void)windowDidResignKey:(NSNotification *)n { [self stopRecordersIn:self.doc]; [self.hotkeyButton stop]; }
+- (void)flushEdits {
+    [self.window makeFirstResponder:nil];
+    if (self.saveTimer) { [self.saveTimer invalidate]; self.saveTimer = nil; [self saveLists]; }
+}
 - (void)windowWillClose:(NSNotification *)n {
+    [self stopRecordersIn:self.doc];
     [self.hotkeyButton stop];
     [self.window makeFirstResponder:nil];            // ends any edit in progress so it gets saved
     if (self.saveTimer) { [self.saveTimer invalidate]; self.saveTimer = nil; [self saveLists]; }

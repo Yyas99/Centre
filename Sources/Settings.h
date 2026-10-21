@@ -9,5 +9,6 @@
 - (void)showPage:(NSInteger)i;
 - (void)showPageNamed:(NSString *)name;
 - (void)useSampleData;
+- (void)flushEdits;                                   // save what's being typed right now
 @end
 

@@ -211,6 +211,20 @@ NSString *prettyHotkey(NSString *spec) {
 
 #pragma mark - Accessibility window management
 
+static CGFloat gReserve = 0; static CGDirectDisplayID gReserveDisplay = 0; static BOOL gReserveTop = NO;
+void setTaskbarReserve(NSScreen *screen, CGFloat height, BOOL top) {
+    gReserve = screen ? MAX(0, height) : 0; gReserveTop = top;
+    gReserveDisplay = screen ? [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] : 0;
+}
+NSRect usableFrame(NSScreen *screen) {
+    NSRect v = screen.visibleFrame;
+    if (gReserve > 0 && [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] == gReserveDisplay) {
+        if (!gReserveTop) v.origin.y += gReserve;
+        v.size.height -= gReserve;
+    }
+    return v;
+}
+
 void moveFrontWindow(NSRunningApplication *app, NSString *mode) {
     if (!app) return;
     if (!AXIsProcessTrusted()) {
@@ -229,7 +243,7 @@ void moveFrontWindow(NSRunningApplication *app, NSString *mode) {
     NSPoint cocoa = NSMakePoint(cur.x + 2, H - cur.y - 2);
     NSScreen *scr = primary;
     for (NSScreen *s in NSScreen.screens) if (NSPointInRect(cocoa, s.frame)) scr = s;
-    NSRect v = scr.visibleFrame, r = v;
+    NSRect v = usableFrame(scr), r = v;
     CGSize curSize = CGSizeZero; CFTypeRef sv = NULL;
     AXUIElementCopyAttributeValue((AXUIElementRef)win, kAXSizeAttribute, &sv);
     if (sv) { AXValueGetValue((AXValueRef)sv, kAXValueTypeCGSize, &curSize); CFRelease(sv); }
@@ -244,7 +258,7 @@ void moveFrontWindow(NSRunningApplication *app, NSString *mode) {
         NSArray<NSScreen *> *all = NSScreen.screens;
         if (all.count < 2 || curSize.width <= 0) { CFRelease(win); CFRelease(appEl); return; }
         NSScreen *next = all[([all indexOfObject:scr] + 1) % all.count];
-        NSRect nv = next.visibleFrame;
+        NSRect nv = usableFrame(next);
         NSRect wr = NSMakeRect(cur.x, H - cur.y - curSize.height, curSize.width, curSize.height);
         CGFloat fx = (wr.origin.x - v.origin.x) / v.size.width, fy = (wr.origin.y - v.origin.y) / v.size.height;
         CGFloat fw = MIN(wr.size.width / v.size.width, 1), fh = MIN(wr.size.height / v.size.height, 1);

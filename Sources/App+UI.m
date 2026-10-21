@@ -189,7 +189,8 @@
                              @"Dictionary": @"Open in Dictionary", @"Timer": @"Start Timer", @"Folder": @"Open Folder" };
     NSString *verb = sel ? (sel.verb ?: verbs[sel.kind ?: @""] ?: @"Run Command") : @"Open";
     if (sel && sel == self.armedItem) verb = @"Confirm";
-    NSMutableArray *h = [NSMutableArray arrayWithObject:@[verb, @"↩"]];
+    NSMutableArray *h = [NSMutableArray new];
+    if (!sel || sel.action) [h addObject:@[verb, @"↩"]];
     if (sel.altAction && sel.altAction != sel.action) {
         NSString *alt = sel.altHint.length ? [[sel.altHint stringByReplacingOccurrencesOfString:@"⌘↩" withString:@""] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] : @"Alternate";
         [h addObject:@[alt, @"⌘", @"↩"]];
@@ -279,8 +280,9 @@
     CItem *i = self.items[self.selected];
     if (i.confirm.length && !(self.armedItem == i && [self.armedAt timeIntervalSinceNow] > -4)) { [self armItem:i]; return; }
     [self disarm];
-    if (i.key.length) [self recordUse:i.key];          // feeds Recent Commands
     CAction a = alt ? (i.altAction ?: i.action) : i.action;
+    if (!a) { NSBeep(); return; }                     // an informational row ("Checking port…", "No matches") — keep the panel open
+    if (i.key.length && ![i.key hasPrefix:@"/"]) [self recordUse:i.key];   // feeds Recent Commands (apps and folders record their own use)
     if (!(i.keepsPanel && !alt)) [self hide];        // rows that lead to another mode keep the panel open
     if (a) a();
 }

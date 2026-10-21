@@ -43,7 +43,7 @@ if [ "$1" = "build" ] || stale; then
   set -o pipefail
   clang -fobjc-arc -O2 -Wall -Wno-deprecated-declarations -Wno-multichar -Wno-unused-variable \
     -framework Cocoa -framework Carbon -framework ApplicationServices -framework QuartzCore -framework Security \
-    -framework ServiceManagement -framework IOKit -framework CoreServices \
+    -framework ServiceManagement -framework IOKit -framework CoreServices -framework CoreAudio -framework AudioToolbox \
     -I"$SRCDIR" "$SRCDIR"/*.m -o "$BIN.new" 2>&1 | tee "$DIR/build.log"
   set +o pipefail
 

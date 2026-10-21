@@ -141,7 +141,10 @@
         [cmds addObjectsFromArray:[self recentCommands:2 exclude:skip]];
     }
     // One glance: drop the least time-sensitive rows first.
-    NSInteger budget = 8;
+    // Fit the screen: the panel opens 20% from the top, so Home gets the rest minus its fixed parts.
+    NSScreen *scr = self.panel.screen ?: NSScreen.mainScreen;
+    CGFloat room = NSHeight(scr.visibleFrame) * 0.8 - 12 - kSearchH - kFooterH - (self.hasNow ? kMediaH : 0) - (apps.count ? kGridH : 0) - (quick.count ? kQuickH : 0);
+    NSInteger budget = MIN(8, MAX(2, (NSInteger)floor((room - 3 * kHomeHeadH) / kHomeRowH)));
     NSInteger (^total)(void) = ^NSInteger { return (NSInteger)(timers.count + selection.count + context.count + clips.count + files.count + cmds.count); };
     while (total() > budget) {
         if (cmds.count) [cmds removeLastObject];

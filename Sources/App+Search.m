@@ -1,5 +1,18 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "App.h"
+#import <dlfcn.h>
+
+// CGSession -suspend was removed in macOS 11. The login framework's SACLockScreenImmediate is what the
+// Lock Screen menu item itself calls; ⌃⌘Q through System Events is the fallback.
+static void lockScreenNow(void) {
+    static int (*lock)(void); static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        void *h = dlopen("/System/Library/PrivateFrameworks/login.framework/Versions/Current/login", RTLD_LAZY);
+        if (h) lock = (int (*)(void))dlsym(h, "SACLockScreenImmediate");
+    });
+    if (lock) lock();
+    else osa(@"tell application \"System Events\" to keystroke \"q\" using {control down, command down}");
+}
 
 @implementation CApp (Search)
 
@@ -9,7 +22,7 @@
     __weak CApp *ws = self;
     NSMutableArray *a = [NSMutableArray new];
     [a addObject:mk(@"Sleep", @"Put the Mac to sleep", @"System", @"moon.zzz", ^{ runShell(@"pmset sleepnow", nil); })];
-    [a addObject:mk(@"Lock Screen", nil, @"System", @"lock", ^{ runShell(@"'/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession' -suspend", nil); })];
+    [a addObject:mk(@"Lock Screen", nil, @"System", @"lock", ^{ lockScreenNow(); })];
     [a addObject:mk(@"Restart", nil, @"System", @"arrow.clockwise", ^{ osa(@"tell application \"System Events\" to restart"); })];
     [a addObject:mk(@"Shut Down", nil, @"System", @"power", ^{ osa(@"tell application \"System Events\" to shut down"); })];
     [a addObject:mk(@"Log Out", nil, @"System", @"person.crop.circle.badge.xmark", ^{ osa(@"tell application \"System Events\" to log out"); })];
@@ -54,6 +67,10 @@
     [a addObject:door(@"Snippets", @"Saved text you paste anywhere  ·  snip", @"Snippet", @"text.quote", @"snip ")];
     [a addObject:door(@"Emoji", @"Search every emoji by name  ·  or type :name", @"Emoji", @"face.smiling", @":")];
     [a addObject:door(@"System Info", @"Battery, IP address, disk space, uptime  ·  info", @"Info", @"info.circle", @"info")];
+    BOOL barOn = ![self.config[@"taskbarEnabled"] isEqual:@NO];
+    CItem *tb = mk(barOn ? @"Hide Taskbar" : @"Show Taskbar", @"Centre's taskbar along the bottom of the screen", @"Window", @"dock.rectangle", ^{
+        NSMutableDictionary *c = [ws mutableConfig]; c[@"taskbarEnabled"] = @(!barOn); [ws writeConfig:c]; });
+    [a addObject:tb];
     // Centre
     [a addObject:mk(@"Centre: Settings", @"Hotkey, links, search prefixes, app folders", @"Centre", @"slider.horizontal.3", ^{ [ws openSettings]; })];
     [a addObject:mk(@"Centre: Rescan Apps", nil, @"Centre", @"arrow.triangle.2.circlepath", ^{ [ws scanApps]; })];
@@ -77,6 +94,7 @@
                                 @"Snippets": @"text expander templates canned replies", @"Emoji": @"emoji smiley symbols picker",
                                 @"System Info": @"battery ip address disk space uptime memory about this mac" };
     for (CItem *c in a) c.keywords = synonyms[c.title];
+    tb.key = @"cmd:Toggle Taskbar"; tb.keywords = @"taskbar panel bar dock plasma";   // one key whether it says Show or Hide
     return a;
 }
 
@@ -137,7 +155,8 @@
     NSMutableArray *r = [NSMutableArray new];
     for (NSDictionary *l in (self.config[@"links"] ?: @[])) {
         if (![l isKindOfClass:[NSDictionary class]]) continue;
-        NSString *name = l[@"name"] ?: @"", *url = l[@"url"] ?: @"";
+        if (![l[@"name"] isKindOfClass:[NSString class]] || ![l[@"url"] isKindOfClass:[NSString class]]) continue;   // hand-edited config
+        NSString *name = l[@"name"], *url = l[@"url"];
         double s = fuzzyScore(q, name); if (s < 0) continue;
         CItem *i = mk(name, url, @"Link", @"link", ^{ openURLString(url); });
         i.score = s - 5 + [self usageBoost:url];
@@ -170,7 +189,7 @@
     for (NSString *c in self.clips) {
         if (q.length && [c rangeOfString:q options:NSCaseInsensitiveSearch].location == NSNotFound) continue;
         NSString *one = [[c stringByReplacingOccurrencesOfString:@"\n" withString:@" ⏎ "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
-        if (one.length > 90) one = [[one substringToIndex:90] stringByAppendingString:@"…"];
+        if (one.length > 90) one = [[one substringToIndex:[one rangeOfComposedCharacterSequenceAtIndex:90].location] stringByAppendingString:@"…"];
         BOOL trusted = AXIsProcessTrusted();
         CItem *i = mk(one, [NSString stringWithFormat:@"%lu chars · %@", (unsigned long)c.length, trusted ? @"↩ Paste  ⌘↩ Copy only" : @"↩ Copy (grant Accessibility to auto-paste)"], @"Clipboard", @"doc.on.clipboard", ^{
             copyText(c);
@@ -188,7 +207,7 @@
 }
 
 - (CItem *)webItem:(NSString *)q {
-    NSString *tpl = self.config[@"webSearch"] ?: @"https://duckduckgo.com/?q=%s";
+    NSString *tpl = ([self.config[@"webSearch"] isKindOfClass:[NSString class]] ? self.config[@"webSearch"] : @"https://duckduckgo.com/?q=%s");
     NSString *url = [tpl stringByReplacingOccurrencesOfString:@"%s" withString:urlEncode(q)];
     CItem *i = mk([NSString stringWithFormat:@"Search the web for “%@”", q], nil, @"Web", @"magnifyingglass", ^{ openURLString(url); });
     i.score = -1000; return i;
@@ -259,7 +278,7 @@
     NSMutableArray *all = [NSMutableArray new];
     if (only) {
         [all addObjectsFromArray:files];
-        if (!all.count) [all addObject:mk(@"No files found", @"Spotlight indexing must be on for this folder", @"Files", @"doc", ^{})];
+        if (!all.count) [all addObject:mk(@"No files found", @"Spotlight indexing must be on for this folder", @"Files", @"doc", nil)];
     }
     else {
         for (CItem *i in self.items) if (![i.kind isEqualToString:@"File"] && ![i.kind isEqualToString:@"Web"]) [all addObject:i];
@@ -271,7 +290,10 @@
         for (CItem *i in self.items) if ([i.kind isEqualToString:@"Web"]) [all addObject:i];
     }
     if (all.count > kMaxRows) all = [[all subarrayWithRange:NSMakeRange(0, kMaxRows)] mutableCopy];
-    self.items = all; self.selected = MIN(self.selected, MAX(0, (NSInteger)all.count - 1));
+    // Results that arrive late must not move the selection under you: keep the same row selected, wherever it is now.
+    CItem *cur = self.selected >= 0 && self.selected < (NSInteger)self.items.count ? self.items[self.selected] : nil;
+    NSUInteger idx = cur ? [all indexOfObjectIdenticalTo:cur] : NSNotFound;
+    self.items = all; self.selected = idx == NSNotFound ? 0 : (NSInteger)idx;
     [self reloadTable];
 }
 
@@ -309,7 +331,7 @@
     if (!r.count) {
         NSString *where = dir ? [dir stringByAbbreviatingWithTildeInPath] : nil;
         CItem *none = mk(where ? [NSString stringWithFormat:@"Nothing matching in %@", where] : @"No folder by that name",
-                         @"Tab completes names · ~ is your home folder", @"Folder", @"folder", ^{});
+                         @"Tab completes names · ~ is your home folder", @"Folder", @"folder", nil);
         if (dir) none.action = ^{ [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:dir]]; };
         [r addObject:none];
     }
@@ -394,13 +416,13 @@
         self.modeLabel = [head isEqualToString:@"kill"] ? @"Force Quit" : @"Quit Apps";
         [out addObjectsFromArray:[self runningAppItems:rest force:[head isEqualToString:@"kill"]]];
         [out sortUsingComparator:byScore];
-    } else if ([head isEqualToString:@"clip"] || [head isEqualToString:@"v"] || [head isEqualToString:@"paste"]) {
+    } else if ([head isEqualToString:@"clip"] || (([head isEqualToString:@"v"] || [head isEqualToString:@"paste"]) && spaced)) {   // "v"/"paste" alone still find VLC, VS Code, Paste
         self.modeLabel = @"Clipboard";
         [out addObjectsFromArray:[self clipItems:rest]];
-        if (!out.count) [out addObject:mk(@"Clipboard history is empty", @"Copy something and it will appear here", @"Clipboard", @"doc.on.clipboard", ^{})];
-    } else if ([head isEqualToString:@"f"] || [head isEqualToString:@"file"] || [head isEqualToString:@"find"]) {
+        if (!out.count) [out addObject:mk(@"Clipboard history is empty", @"Copy something and it will appear here", @"Clipboard", @"doc.on.clipboard", nil)];
+    } else if (([head isEqualToString:@"f"] || [head isEqualToString:@"file"] || [head isEqualToString:@"find"]) && spaced) {   // "f" alone still finds Finder
         self.modeLabel = @"Files";
-        [out addObject:mk([NSString stringWithFormat:@"Searching files for “%@”…", rest], nil, @"Files", @"doc", ^{})];
+        [out addObject:mk([NSString stringWithFormat:@"Searching files for “%@”…", rest], nil, @"Files", @"doc", nil)];
         [self startFileSearch:rest onlyFiles:YES];
     } else if ([q hasPrefix:@"/"] || [q hasPrefix:@"~"]) {
         self.modeLabel = @"Folders";

@@ -3,7 +3,7 @@
 #import "Centre.h"
 #import "Views.h"
 
-@class CSettings;
+@class CSettings, CTaskbar;
 
 @interface CApp : NSObject <NSApplicationDelegate, NSTextFieldDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate>
 @property (nonatomic, strong) CPanel *panel;
@@ -60,11 +60,13 @@
 @property (nonatomic) EventHotKeyRef hotKeyRef;
 @property (nonatomic) NSTimeInterval lastScan;
 @property (nonatomic) BOOL rebuilding;
+@property (nonatomic) BOOL relaunchPending;   // a new build is ready; relaunch once the panel and Settings are closed
 @property (nonatomic, copy) NSString *snapshotDir;
 @property (nonatomic) BOOL readmeMode;                       // --readme <dir>: curated screenshots with neutral sample data
 @property (nonatomic, strong) NSArray<CItem *> *readmeApps;   // --snapshot <dir>: render the UI offscreen to PNGs and exit
 @property (nonatomic, strong) NSDate *failedSource;
 @property (nonatomic, strong) CSettings *settings;
+@property (nonatomic, strong) CTaskbar *taskbar;
 @property (nonatomic) BOOL hotkeyFailed;                               // another app owns the shortcut
 @property (nonatomic, strong) NSMutableArray<NSMutableDictionary *> *timers;   // @{end, label, total, timer}
 @property (nonatomic) IOPMAssertionID awakeAssertion;                  // non-zero while Keep Awake is on
@@ -99,6 +101,7 @@
 - (void)openSettings;
 - (void)openSettingsPage:(NSString *)name;
 - (void)writeConfig:(NSDictionary *)c;
+- (NSMutableDictionary *)mutableConfig;   // fresh from disk, so a write never reverts edits made in a text editor
 - (void)setLaunchAtLogin:(BOOL)on;
 - (void)resetUsage;
 - (void)grantAX;
@@ -109,6 +112,8 @@
 - (NSDate *)sourceDate;
 - (void)rebuild;
 - (void)rebuildQuietly:(BOOL)quiet;
+- (void)relaunch;
+- (void)startNormally;
 - (NSString *)handoffPath;
 - (void)saveClipHandoff;
 - (void)loadClipHandoff;
