@@ -11,6 +11,7 @@
 #import <IOKit/ps/IOPSKeys.h>
 #import <ifaddrs.h>
 #import <net/if.h>
+#import <dlfcn.h>
 
 // Metrics follow Settings › Taskbar (size, floating, position, app names); set in -apply before any layout or drawing.
 static CGFloat gBarH = 48, gBarGap = 8, gTaskW = 44, gTaskIcon = 30, gBarRadius = 14;
@@ -59,6 +60,8 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBVolume, CT
 @property (nonatomic, strong) NSRunningApplication *app;
 @property (nonatomic) BOOL pinned;
 @property (nonatomic) BOOL sampleRunning, sampleActive;   // README screenshots: running state without real apps
+@property (nonatomic, strong) id win;                    // one window of the app (AXUIElementRef) when windows aren't grouped
+@property (nonatomic) BOOL minimized;
 @end
 @implementation CTBItem @end
 
@@ -76,6 +79,7 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBVolume, CT
 @property (nonatomic, strong) NSTimer *tick, *tipTimer, *hideTimer;
 @property (nonatomic) NSUInteger ticks;
 @property (nonatomic) BOOL hiddenAway, menuOpen;      // auto-hide state; a menu or popover is open
+@property (nonatomic) BOOL fullScreenAway;             // stepped aside for a full-screen app
 @property (nonatomic, strong) id globalMouse, localMouse;
 @property (nonatomic, strong) NSArray<NSRunningApplication *> *peeked;   // apps hidden by "show desktop", restored on the next click
 @property (nonatomic, strong) NSPopover *calendar;
@@ -83,6 +87,9 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBVolume, CT
 @property (nonatomic, copy) NSString *appliedDock;      // Dock mode last applied this session
 @property (nonatomic, strong) NSArray<NSString *> *sampleApps, *sampleRunningApps;
 @property (nonatomic, copy) NSString *sampleActiveApp;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, id> *observers;               // pid → AXObserver: windows opening, closing, minimising
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSArray *> *winOrder;         // pid → windows in first-seen order, so buttons don't shuffle on focus
+@property (nonatomic, strong) id focusedWin;                                               // the front app's focused window
 - (void)layoutItems;
 - (void)clickItem:(CTBItem *)it;
 - (void)menuForItem:(CTBItem *)it event:(NSEvent *)e;
@@ -92,7 +99,10 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBVolume, CT
 - (BOOL)isActive:(CTBItem *)it;
 - (NSImage *)iconForPath:(NSString *)p;
 - (BOOL)wants:(NSString *)key fallback:(BOOL)def;
+- (void)windowsChanged;
 @end
+
+static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r);
 
 #pragma mark - Bar chrome
 
@@ -192,7 +202,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
                 BOOL named = gLabels && r.size.width > gTaskW + 4;       // wider than an icon slot means it carries its name
                 CGFloat ix = named ? NSMinX(r) + 10 : round(NSMidX(r) - s / 2);
                 NSRect ir = NSMakeRect(ix, round(NSMidY(r) - s / 2 + (2 + lift) * away), s, s);
-                BOOL hidden = it.app.hidden;
+                BOOL hidden = it.app.hidden || it.minimized;
                 CGFloat alpha = (it.app && hidden) ? 0.5 : (self.dragging && press ? 0.75 : 1);
                 [ic drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:alpha];
                 if (named) {
@@ -311,7 +321,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
     if (target > from) target--;                                   // removing it first shifts later slots left
     if (from != NSNotFound && target != from) {
         [self.owner movePinned:it.path toIndex:target];
-        for (NSUInteger k = 0; k < self.owner.items.count; k++) if ([self.owner.items[k].path isEqualToString:it.path]) self.press = (NSInteger)k;
+        for (NSUInteger k = 0; k < self.owner.items.count; k++) if (self.owner.items[k].pinned && [self.owner.items[k].path isEqualToString:it.path]) { self.press = (NSInteger)k; break; }
     }
     [self setNeedsDisplay:YES];
 }
@@ -341,6 +351,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
 - (instancetype)initWithApp:(CApp *)app {
     if ((self = [super init])) {
         _app = app; _icons = [NSMutableDictionary new]; _items = @[];
+        _observers = [NSMutableDictionary new]; _winOrder = [NSMutableDictionary new];
         _lastFront = [NSWorkspace sharedWorkspace].frontmostApplication.processIdentifier;
     }
     return self;
@@ -438,7 +449,13 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
             if ([note.name isEqualToString:NSWorkspaceDidActivateApplicationNotification] && a && a != NSRunningApplication.currentApplication)
                 ws.lastFront = a.processIdentifier;
             [ws rebuild];
+            [ws checkFullScreen];
         }];
+    // Entering or leaving full screen switches Space; check at once, and again once the animation settles.
+    [wc addObserverForName:NSWorkspaceActiveSpaceDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+        [ws checkFullScreen]; [ws windowsChanged];                    // each Space has its own windows
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [ws checkFullScreen]; });
+    }];
     [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:[NSOperationQueue mainQueue]
                                                   usingBlock:^(NSNotification *note) { [ws apply]; }];
 }
@@ -448,7 +465,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
     if (!self.app.snapshotDir) [self syncDock:on];
     if (!on) {
         [self.bar orderOut:nil]; [self.tip orderOut:nil];
-        [self.tick invalidate]; self.tick = nil;
+        [self.tick invalidate]; self.tick = nil; self.fullScreenAway = NO;
         [self stopAutoHide];
         setTaskbarReserve(nil, 0, NO);
         return;
@@ -461,7 +478,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
     [self rebuild];
     if (!self.tick) {
         __weak CTaskbar *ws = self;
-        self.tick = [NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) { [ws refreshStatus:NO]; }];
+        self.tick = [NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) { [ws refreshStatus:NO]; [ws checkFullScreen]; }];   // also catches borderless games
         [[NSRunLoop mainRunLoop] addTimer:self.tick forMode:NSRunLoopCommonModes];
     }
     BOOL autoHide = [self wants:@"taskbarAutoHide" fallback:NO];
@@ -476,8 +493,76 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
         CGFloat strip = gTop ? NSMaxY(v) - NSMinY(f) + 4 : NSMaxY(f) + 4 - v.origin.y;
         setTaskbarReserve([self screen], strip, gTop);           // window snapping leaves the bar uncovered
     }
-    [self.bar orderFrontRegardless];
+    self.fullScreenAway = [self fullScreenInFront];
+    if (self.fullScreenAway) { [self.bar orderOut:nil]; [self.tip orderOut:nil]; }
+    else [self.bar orderFrontRegardless];
     [self.barView setNeedsDisplay:YES];
+}
+
+#pragma mark Full screen
+
+// Is the display showing a full-screen Space? The window server knows (Space type 4); this is how it stays right when
+// macOS keeps the menu bar visible in full screen, so the window no longer covers the whole display.
+// CGSCopyManagedDisplaySpaces is private but long-lived; looked up at run time, so a missing symbol just means "no".
+static BOOL displayInFullScreenSpace(CGDirectDisplayID did) {
+    static int (*mainConn)(void); static CFArrayRef (*copySpaces)(int);
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        mainConn = dlsym(RTLD_DEFAULT, "CGSMainConnectionID") ?: dlsym(RTLD_DEFAULT, "SLSMainConnectionID");
+        copySpaces = dlsym(RTLD_DEFAULT, "CGSCopyManagedDisplaySpaces") ?: dlsym(RTLD_DEFAULT, "SLSCopyManagedDisplaySpaces");
+    });
+    if (!mainConn || !copySpaces) return NO;
+    CFArrayRef raw = copySpaces(mainConn());
+    if (!raw) return NO;
+    NSArray *displays = CFBridgingRelease(raw);
+    NSString *uuid = nil;
+    CFUUIDRef u = CGDisplayCreateUUIDFromDisplayID(did);
+    if (u) { uuid = CFBridgingRelease(CFUUIDCreateString(NULL, u)); CFRelease(u); }
+    for (NSDictionary *d in displays) {
+        if (![d isKindOfClass:[NSDictionary class]]) continue;
+        NSString *ident = [d[@"Display Identifier"] isKindOfClass:[NSString class]] ? d[@"Display Identifier"] : @"";
+        // "Main" when displays share Spaces; otherwise each display is listed by its UUID.
+        BOOL ours = displays.count == 1 || [ident isEqualToString:@"Main"] || (uuid && [ident caseInsensitiveCompare:uuid] == NSOrderedSame);
+        if (!ours) continue;
+        NSDictionary *cur = [d[@"Current Space"] isKindOfClass:[NSDictionary class]] ? d[@"Current Space"] : nil;
+        return [cur[@"type"] intValue] == 4;
+    }
+    return NO;
+}
+
+// Native full screen and split view (by Space type), or the app you're using covering the display (borderless games, slideshows).
+// Reads only window owners and bounds, so it needs no Screen Recording permission.
+- (BOOL)fullScreenInFront {
+    if (![self wants:@"taskbarHideFullScreen" fallback:YES]) return NO;
+    if (displayInFullScreenSpace([[self screen].deviceDescription[@"NSScreenNumber"] unsignedIntValue])) return YES;
+    // Not a full-screen Space: a borderless game or slideshow can still cover the display.
+    pid_t front = [NSWorkspace sharedWorkspace].frontmostApplication.processIdentifier;
+    if (front == getpid()) front = self.lastFront;               // Centre's own panel over a full-screen app keeps the bar away
+    if (front <= 0) return NO;
+    CGRect d = CGDisplayBounds([[self screen].deviceDescription[@"NSScreenNumber"] unsignedIntValue]);
+    CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+    if (!list) return NO;
+    BOOL full = NO;
+    for (NSDictionary *w in (__bridge NSArray *)list) {
+        if ([w[(id)kCGWindowOwnerPID] intValue] != front || [w[(id)kCGWindowLayer] integerValue] < 0 || [w[(id)kCGWindowAlpha] doubleValue] < 0.05) continue;
+        CGRect b;
+        if ([w[(id)kCGWindowBounds] isKindOfClass:[NSDictionary class]] && CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(id)kCGWindowBounds], &b) &&
+            windowFillsDisplay(b, d)) { full = YES; break; }
+    }
+    CFRelease(list);
+    return full;
+}
+- (void)checkFullScreen {
+    if (!self.built || self.app.snapshotDir || !self.tick) return;   // the bar is off
+    BOOL full = [self fullScreenInFront];
+    if (full == self.fullScreenAway) return;
+    if (full) {
+        self.fullScreenAway = YES;
+        [self.hideTimer invalidate]; self.hideTimer = nil;
+        if (self.calendar.shown) [self.calendar close];
+        [self.tip orderOut:nil];
+        [self.bar orderOut:nil];
+    } else [self apply];                                          // back exactly as Settings has it, auto-hide included
 }
 
 #pragma mark The macOS Dock
@@ -563,18 +648,41 @@ static id dockValue(NSString *key) {
     for (NSRunningApplication *r in [NSWorkspace sharedWorkspace].runningApplications)
         if (r.activationPolicy == NSApplicationActivationPolicyRegular && r != NSRunningApplication.currentApplication && !r.terminated && r.bundleURL) [running addObject:r];
     [running sortUsingComparator:^NSComparisonResult(NSRunningApplication *a, NSRunningApplication *b) { return [a.launchDate ?: [NSDate distantPast] compare:b.launchDate ?: [NSDate distantPast]]; }];
+    BOOL perWindow = ![self wants:@"taskbarGroup" fallback:NO] && AXIsProcessTrusted();
+    NSDictionary<NSNumber *, NSArray *> *lists = perWindow ? [self watchWindows:running] : [self watchWindows:@[]];
+    // One button per window (minimised ones too), or one per app when grouped. A pinned app's first window takes its pin slot.
+    void (^addApp)(NSString *, NSRunningApplication *, BOOL) = ^(NSString *path, NSRunningApplication *r, BOOL pinned) {
+        NSString *name = r.localizedName ?: [[NSFileManager defaultManager] displayNameAtPath:path].stringByDeletingPathExtension;
+        NSArray *wins = (perWindow && r) ? [self ordered:lists[@(r.processIdentifier)] pid:r.processIdentifier] : @[];
+        if (!wins.count) {
+            CTBItem *t = [CTBItem new]; t.kind = CTBTask; t.path = path; t.app = r; t.pinned = pinned; t.title = name ?: @"App";
+            [items addObject:t];
+            return;
+        }
+        for (NSDictionary *w in wins) {
+            CTBItem *t = [CTBItem new]; t.kind = CTBTask; t.path = path; t.app = r; t.pinned = pinned && w == wins.firstObject;
+            t.win = w[@"win"]; t.minimized = [w[@"min"] boolValue];
+            t.title = [w[@"title"] length] ? w[@"title"] : name;
+            [items addObject:t];
+        }
+    };
     NSMutableSet *claimed = [NSMutableSet new];
     for (NSString *p in [self pinnedPaths]) {
         if (![[NSFileManager defaultManager] fileExistsAtPath:p]) continue;
-        CTBItem *t = [CTBItem new]; t.kind = CTBTask; t.path = p; t.pinned = YES;
-        for (NSRunningApplication *r in running) if ([r.bundleURL.path.stringByStandardizingPath isEqualToString:p.stringByStandardizingPath]) { t.app = r; [claimed addObject:r]; break; }
-        t.title = t.app.localizedName ?: [[NSFileManager defaultManager] displayNameAtPath:p].stringByDeletingPathExtension;
-        [items addObject:t];
+        NSRunningApplication *app = nil;
+        for (NSRunningApplication *r in running) if ([r.bundleURL.path.stringByStandardizingPath isEqualToString:p.stringByStandardizingPath]) { app = r; [claimed addObject:r]; break; }
+        addApp(p, app, YES);
     }
-    for (NSRunningApplication *r in running) {
-        if ([claimed containsObject:r]) continue;
-        CTBItem *t = [CTBItem new]; t.kind = CTBTask; t.path = r.bundleURL.path; t.app = r; t.title = r.localizedName ?: @"App";
-        [items addObject:t];
+    for (NSRunningApplication *r in running) if (![claimed containsObject:r]) addApp(r.bundleURL.path, r, NO);
+    self.focusedWin = nil;
+    NSRunningApplication *front = [NSWorkspace sharedWorkspace].frontmostApplication;
+    pid_t fpid = (front && front != NSRunningApplication.currentApplication) ? front.processIdentifier : self.lastFront;
+    if (perWindow && fpid > 0) {
+        AXUIElementRef ae = AXUIElementCreateApplication(fpid);
+        AXUIElementSetMessagingTimeout(ae, 0.1);
+        CFTypeRef fw = NULL;
+        if (AXUIElementCopyAttributeValue(ae, kAXFocusedWindowAttribute, &fw) == kAXErrorSuccess && fw) self.focusedWin = CFBridgingRelease(fw);
+        CFRelease(ae);
     }
     NSArray *tray = @[@(CTBMedia), @(CTBVolume), @(CTBWifi), @(CTBBattery), @(CTBClock), @(CTBDesktop)];
     for (NSNumber *k in tray) { CTBItem *t = [CTBItem new]; t.kind = k.integerValue; [items addObject:t]; }
@@ -651,7 +759,81 @@ static id dockValue(NSString *key) {
     if (!it.app || it.app.hidden) return NO;
     NSRunningApplication *front = [NSWorkspace sharedWorkspace].frontmostApplication;
     pid_t pid = (front && front != NSRunningApplication.currentApplication) ? front.processIdentifier : self.lastFront;
-    return it.app.processIdentifier == pid;
+    if (it.app.processIdentifier != pid) return NO;
+    if (!it.win) return YES;
+    if (it.minimized) return NO;
+    if (self.focusedWin) return CFEqual((__bridge CFTypeRef)it.win, (__bridge CFTypeRef)self.focusedWin);
+    for (CTBItem *x in self.items) if (x.app == it.app && x.win && !x.minimized) return x == it;   // no focus info: the app's first open window
+    return NO;
+}
+
+#pragma mark Windows (Accessibility)
+
+// Windows in the order they first appeared, so focusing one never reshuffles the bar.
+- (NSArray<NSDictionary *> *)ordered:(NSArray<NSDictionary *> *)now pid:(pid_t)pid {
+    if (!now.count) return @[];
+    NSNumber *key = @(pid);
+    NSMutableArray *order = [NSMutableArray new];
+    NSMutableArray *els = [NSMutableArray new]; for (NSDictionary *w in now) [els addObject:w[@"win"]];
+    for (id el in self.winOrder[key]) if ([els containsObject:el]) [order addObject:el];       // isEqual: on AX elements is CFEqual
+    for (id el in els) if (![order containsObject:el]) [order addObject:el];
+    self.winOrder[key] = order;
+    NSMutableArray *out = [NSMutableArray new];
+    for (id el in order) [out addObject:now[[els indexOfObject:el]]];
+    return out;
+}
+
+static void axWindowEvent(AXObserverRef obs, AXUIElementRef el, CFStringRef note, void *ctx) {
+    [(__bridge CTaskbar *)ctx windowsChanged];
+}
+// One observer per running app (needs Accessibility). App-level: windows created, focus moves. Per window: closed,
+// minimised, restored, renamed — re-adding an existing registration is a cheap no-op, so this runs on every rebuild.
+// Returns each app's current windows (pid → list), read once per rebuild.
+- (NSDictionary<NSNumber *, NSArray *> *)watchWindows:(NSArray<NSRunningApplication *> *)running {
+    NSMutableSet *alive = [NSMutableSet new];
+    NSMutableDictionary *lists = [NSMutableDictionary new];
+    for (NSRunningApplication *r in running) {
+        NSNumber *key = @(r.processIdentifier); [alive addObject:key];
+        AXObserverRef obs = (__bridge AXObserverRef)self.observers[key];
+        AXUIElementRef ae = AXUIElementCreateApplication(r.processIdentifier);
+        AXUIElementSetMessagingTimeout(ae, 0.1);
+        if (!obs) {
+            if (AXObserverCreate(r.processIdentifier, axWindowEvent, &obs) == kAXErrorSuccess && obs) {
+                self.observers[key] = CFBridgingRelease(obs);
+                CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), kCFRunLoopCommonModes);
+                for (NSString *n in @[(id)kAXWindowCreatedNotification, (id)kAXFocusedWindowChangedNotification, (id)kAXMainWindowChangedNotification])
+                    AXObserverAddNotification(obs, ae, (__bridge CFStringRef)n, (__bridge void *)self);
+            } else obs = NULL;                                       // still list its windows; they just won't update live
+        }
+        NSArray *wins = appWindows(r); lists[key] = wins;
+        if (obs) for (NSDictionary *w in wins)
+            for (NSString *n in @[(id)kAXUIElementDestroyedNotification, (id)kAXWindowMiniaturizedNotification, (id)kAXWindowDeminiaturizedNotification, (id)kAXTitleChangedNotification])
+                AXObserverAddNotification(obs, (__bridge AXUIElementRef)w[@"win"], (__bridge CFStringRef)n, (__bridge void *)self);
+        CFRelease(ae);
+    }
+    for (NSNumber *key in self.observers.allKeys) if (![alive containsObject:key]) {      // app quit (or windows grouped again)
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource((__bridge AXObserverRef)self.observers[key]), kCFRunLoopCommonModes);
+        [self.observers removeObjectForKey:key];
+    }
+    for (NSNumber *key in self.winOrder.allKeys) if (![alive containsObject:key]) [self.winOrder removeObjectForKey:key];
+    return lists;
+}
+// A burst of window events (a new window is created, focused and titled at once) rebuilds the bar once.
+- (void)windowsChanged {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(rebuild) object:nil];
+    [self performSelector:@selector(rebuild) withObject:nil afterDelay:0.12 inModes:@[NSRunLoopCommonModes]];
+}
+static void raiseWindow(id win, NSRunningApplication *r) {
+    AXUIElementRef w = (__bridge AXUIElementRef)win;
+    if (r.hidden) [r unhide];
+    CFTypeRef mn = NULL;
+    if (AXUIElementCopyAttributeValue(w, kAXMinimizedAttribute, &mn) == kAXErrorSuccess && mn) {
+        if (CFGetTypeID(mn) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)mn)) AXUIElementSetAttributeValue(w, kAXMinimizedAttribute, kCFBooleanFalse);
+        CFRelease(mn);
+    }
+    AXUIElementPerformAction(w, kAXRaiseAction);
+    AXUIElementSetAttributeValue(w, kAXMainAttribute, kCFBooleanTrue);
+    [r activateWithOptions:0];
 }
 
 - (NSImage *)iconForPath:(NSString *)p {
@@ -733,8 +915,18 @@ static id dockValue(NSString *key) {
         case CTBTask: {
             NSRunningApplication *r = it.app;
             if (!r) { [self launch:it.path]; break; }
+            if (it.win) {                                              // one window: minimise it if it's the one you're in, else bring it back
+                if ([self isActive:it]) AXUIElementSetAttributeValue((__bridge AXUIElementRef)it.win, kAXMinimizedAttribute, kCFBooleanTrue);
+                else raiseWindow(it.win, r);
+                [self windowsChanged];
+                break;
+            }
             if ([self isActive:it]) { [r hide]; break; }              // click the app in front: get it out of the way
             if (r.hidden) [r unhide];
+            // Grouped: if every window is minimised, bring the most recent back, like the Dock does.
+            NSArray *wins = appWindows(r); NSDictionary *open = nil, *mini = nil;
+            for (NSDictionary *w in wins) { if (![w[@"min"] boolValue]) { open = w; break; } if (!mini) mini = w; }
+            if (!open && mini) { raiseWindow(mini[@"win"], r); break; }
             if (r.bundleURL) [self launch:r.bundleURL.path];          // reopens a window if it has none, and brings it forward
             else [r activateWithOptions:NSApplicationActivateAllWindows];
             break;
@@ -828,6 +1020,11 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
             if (!standard) continue;
             CFTypeRef t = NULL; AXUIElementCopyAttributeValue(w, kAXTitleAttribute, &t);
             NSString *title = (t && CFGetTypeID(t) == CFStringGetTypeID()) ? [(__bridge NSString *)t copy] : nil; if (t) CFRelease(t);
+            // Finder reports the desktop as an untitled window; real Finder windows are always named after a folder.
+            if (!title.length && [r.bundleIdentifier isEqualToString:@"com.apple.finder"]) continue;
+            CFTypeRef sz = NULL; CGSize size = CGSizeZero;
+            if (AXUIElementCopyAttributeValue(w, kAXSizeAttribute, &sz) == kAXErrorSuccess && sz) { AXValueGetValue((AXValueRef)sz, kAXValueTypeCGSize, &size); CFRelease(sz); }
+            if (size.width < 60 || size.height < 40) continue;                    // invisible helper windows
             CFTypeRef mn = NULL; AXUIElementCopyAttributeValue(w, kAXMinimizedAttribute, &mn);
             BOOL mini = mn && CFGetTypeID(mn) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)mn); if (mn) CFRelease(mn);
             [out addObject:@{@"title": title.length ? title : (r.localizedName ?: @"Window"), @"win": (__bridge id)w, @"min": @(mini)}];
@@ -853,7 +1050,7 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
             [m addItem:[self item:@"Hide Taskbar" action:@selector(menuHideBar:) object:nil]];
             break;
         case CTBTask: {
-            NSMenuItem *head = [[NSMenuItem alloc] initWithTitle:it.title action:nil keyEquivalent:@""]; head.enabled = NO;
+            NSMenuItem *head = [[NSMenuItem alloc] initWithTitle:it.app.localizedName ?: it.title action:nil keyEquivalent:@""]; head.enabled = NO;
             head.image = [[self iconForPath:it.path] copy]; head.image.size = NSMakeSize(16, 16);
             [m addItem:head];
             NSArray *wins = appWindows(it.app);
@@ -867,6 +1064,11 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
                 }
             }
             [m addItem:[NSMenuItem separatorItem]];
+            if (it.win) {
+                [m addItem:[self item:it.minimized ? @"Restore Window" : @"Minimise Window" action:@selector(menuMinimise:) object:it]];
+                [m addItem:[self item:@"Close Window" action:@selector(menuCloseWindow:) object:it]];
+                [m addItem:[NSMenuItem separatorItem]];
+            }
             if (it.app) {
                 [m addItem:[self item:it.app.hidden ? @"Show" : @"Hide" action:@selector(menuHide:) object:it.app]];
                 NSMenuItem *reveal = [self item:@"Show in Finder" action:@selector(menuReveal:) object:it.path]; [m addItem:reveal];
@@ -917,6 +1119,19 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
     if (r.hidden) [r unhide];
     [r activateWithOptions:0];
 }
+- (void)menuMinimise:(NSMenuItem *)m {
+    CTBItem *it = m.representedObject;
+    if (it.minimized) raiseWindow(it.win, it.app);
+    else AXUIElementSetAttributeValue((__bridge AXUIElementRef)it.win, kAXMinimizedAttribute, kCFBooleanTrue);
+    [self windowsChanged];
+}
+- (void)menuCloseWindow:(NSMenuItem *)m {                       // presses the window's own close button, so the app can ask to save
+    CTBItem *it = m.representedObject; CFTypeRef btn = NULL;
+    if (AXUIElementCopyAttributeValue((__bridge AXUIElementRef)it.win, kAXCloseButtonAttribute, &btn) == kAXErrorSuccess && btn) {
+        AXUIElementPerformAction((AXUIElementRef)btn, kAXPressAction); CFRelease(btn);
+    }
+    [self windowsChanged];
+}
 - (void)menuHide:(NSMenuItem *)m { NSRunningApplication *r = m.representedObject; if (r.hidden) { [r unhide]; [r activateWithOptions:0]; } else [r hide]; }
 - (void)menuReveal:(NSMenuItem *)m { [[NSWorkspace sharedWorkspace] selectFile:m.representedObject inFileViewerRootedAtPath:@""]; }
 - (void)menuLaunch:(NSMenuItem *)m { [self launch:m.representedObject]; }
@@ -939,6 +1154,12 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
         case CTBStart: return @"Centre  ·  right-click for settings";
         case CTBTask: {
             if (!it.app) return it.title;
+            if (it.win) {
+                NSString *t = it.title.length > 70 ? [[it.title substringToIndex:70] stringByAppendingString:@"…"] : it.title;
+                NSString *name = it.app.localizedName ?: @"";
+                return [NSString stringWithFormat:@"%@%@%@", [t isEqualToString:name] ? t : [NSString stringWithFormat:@"%@  ·  %@", t, name],
+                        it.minimized ? @"  ·  minimised" : @"", it.app.hidden ? @"  ·  hidden" : @""];
+            }
             NSUInteger n = appWindows(it.app).count;
             NSString *w = n ? [NSString stringWithFormat:@"  ·  %lu window%@", (unsigned long)n, n == 1 ? @"" : @"s"] : @"";
             return [NSString stringWithFormat:@"%@%@%@", it.title, it.app.hidden ? @"  ·  hidden" : @"", w];
@@ -1000,6 +1221,7 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
     [self.hideTimer invalidate]; self.hideTimer = nil;
 }
 - (void)checkPointer {
+    if (self.fullScreenAway) return;                              // the edge belongs to the full-screen app
     NSPoint m = [NSEvent mouseLocation]; NSRect f = [self barFrame]; NSScreen *s = [self screen];
     NSRect v = s.visibleFrame;
     if (self.hiddenAway) {
@@ -1018,6 +1240,7 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
 - (void)slide:(BOOL)show {
     NSRect f = [self barFrame];
     NSRect away = NSOffsetRect(f, 0, (gTop ? 1 : -1) * (f.size.height + gBarGap + 6));
+    if (show && self.fullScreenAway) return;
     self.hiddenAway = !show;
     self.bar.ignoresMouseEvents = !show;                         // a hidden bar must never swallow clicks at the screen edge
     if (show) { [self.bar setFrame:away display:NO]; [self.bar orderFrontRegardless]; }

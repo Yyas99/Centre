@@ -382,7 +382,10 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     self.relaunchPending = NO;
     [self saveClipHandoff];
     NSTask *t = [NSTask new]; t.launchPath = @"/bin/sh";
-    t.arguments = @[@"-c", [NSString stringWithFormat:@"while kill -0 %d 2>/dev/null; do sleep 0.1; done; open %@", getpid(), shellQuote([NSBundle mainBundle].bundlePath)]];
+    // If the new copy still doesn't show up a few seconds later (it lost a race at launch), open it once more.
+    NSString *app = shellQuote([NSBundle mainBundle].bundlePath), *bin = shellQuote([NSBundle mainBundle].executablePath.lastPathComponent);
+    t.arguments = @[@"-c", [NSString stringWithFormat:@"while kill -0 %d 2>/dev/null; do sleep 0.1; done; sleep 0.3; open %@; "
+                            "for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -qx %@ && exit 0; sleep 0.5; done; open %@", getpid(), app, bin, app]];
     [t launch];
     [NSApp terminate:nil];
 }

@@ -327,3 +327,11 @@ NSArray<NSDictionary *> *parseLsof(NSString *out) {
     }
     return [r filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"pid > 0"]];
 }
+
+// Top edge to bottom edge of the display (only a full-screen window can cover the menu bar's strip and the Dock's),
+// inside it, and at least a third of its width, so each side of a split view counts.
+BOOL windowFillsDisplay(CGRect w, CGRect d) {
+    if (CGRectIsEmpty(d) || CGRectIsEmpty(w)) return NO;
+    return fabs(CGRectGetMinY(w) - CGRectGetMinY(d)) <= 1 && fabs(CGRectGetMaxY(w) - CGRectGetMaxY(d)) <= 1 &&
+           CGRectGetMinX(w) >= CGRectGetMinX(d) - 1 && CGRectGetMaxX(w) <= CGRectGetMaxX(d) + 1 && w.size.width >= d.size.width / 3;
+}

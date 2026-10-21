@@ -1,5 +1,6 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "App.h"
+#include <signal.h>
 
 int main(int argc, const char *argv[]) {
     @autoreleasepool {
@@ -15,7 +16,9 @@ int main(int argc, const char *argv[]) {
         NSString *bid = [NSBundle mainBundle].bundleIdentifier ?: @"com.y.centre";
         pid_t me = [NSProcessInfo processInfo].processIdentifier;
         if (!snapDir) for (NSRunningApplication *r in [NSRunningApplication runningApplicationsWithBundleIdentifier:bid]) {
-            if (r.processIdentifier != me && !r.terminated) {
+            // LaunchServices can still list a copy that has just exited (right after a self-rebuild);
+            // only defer to one that is really alive, or both would be gone.
+            if (r.processIdentifier != me && !r.terminated && kill(r.processIdentifier, 0) == 0) {
                 [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.y.centre.show" object:nil userInfo:nil deliverImmediately:YES];
                 return 0;
             }

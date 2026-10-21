@@ -93,6 +93,7 @@ NSTimeZone *zoneForPlace(NSString *place);
 NSDictionary *timeQuery(NSString *q, NSDate *now, NSTimeZone *local);
 NSArray<NSArray<NSString *> *> *emojiTable(void);
 NSArray<NSDictionary *> *parseLsof(NSString *out);
+BOOL windowFillsDisplay(CGRect w, CGRect d);   // full screen, or one side of a full-screen split view
 
 #pragma mark - Theme and HUD (Theme.m)
 

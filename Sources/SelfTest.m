@@ -113,6 +113,10 @@ int runSelfTests(void) {
     NSArray *ls = parseLsof(@"p812\ncnode\nf23\np99\ncPython\n");
     check(ls.count == 2 && [ls[0][@"name"] isEqualToString:@"node"] && [ls[1][@"pid"] intValue] == 99, @"ports: lsof parsing");
 
+    CGRect disp = CGRectMake(0, 0, 1512, 982);
+    check(windowFillsDisplay(disp, disp) && windowFillsDisplay(CGRectMake(756, 0, 756, 982), disp), @"full screen: whole display and split view");
+    check(!windowFillsDisplay(CGRectMake(0, 33, 1512, 880), disp) && !windowFillsDisplay(CGRectMake(1512, 0, 1512, 982), disp) &&
+          !windowFillsDisplay(CGRectMake(0, 0, 300, 982), disp), @"full screen: zoomed, other display and sidebars are not");
     printf("Self-test: %d/%d passed\n", checks - failures, checks);
     return failures;
 }

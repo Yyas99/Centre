@@ -757,12 +757,13 @@ static NSString *keyKind(NSString *k) {
     NSDictionary *c = self.app.config;
     [self addHeader:@"Bar" note:nil];
     BOOL top = [c[@"taskbarPosition"] isEqual:@"top"];
-    [self addFull:setCard(@[setRow(@"Show the taskbar", @"On your main display, on every Space. Hidden while an app is full screen.", [self switchFor:@"taskbarEnabled" fallback:YES]),
+    [self addFull:setCard(@[setRow(@"Show the taskbar", @"On your main display, on every Space.", [self switchFor:@"taskbarEnabled" fallback:YES]),
                             setRow(@"Position", top ? @"Just under the menu bar." : @"Along the bottom, above the Dock while the Dock shows.",
                                    [self choice:@[@[@"Bottom", @"bottom"], @[@"Top", @"top"]] key:@"taskbarPosition" fallback:@"bottom"]),
                             setRow(@"Size", nil, [self choice:@[@[@"Compact", @"compact"], @[@"Standard", @"normal"], @[@"Large", @"large"]] key:@"taskbarSize" fallback:@"normal"]),
                             setRow(@"Floating", @"Rounded, with a gap from the screen edge. Off: edge to edge.", [self switchFor:@"taskbarFloating" fallback:YES]),
-                            setRow(@"Auto-hide", top ? @"Slides away until the pointer reaches the menu bar." : @"Slides away until the pointer touches the bottom edge.", [self switchFor:@"taskbarAutoHide" fallback:NO])])];
+                            setRow(@"Auto-hide", top ? @"Slides away until the pointer reaches the menu bar." : @"Slides away until the pointer touches the bottom edge.", [self switchFor:@"taskbarAutoHide" fallback:NO]),
+                            setRow(@"Hide in full screen", @"Steps aside for full-screen apps, videos, games and slideshows.", [self switchFor:@"taskbarHideFullScreen" fallback:YES])])];
     [self gap];
 
     NSString *dock = [c[@"taskbarDock"] isKindOfClass:[NSString class]] ? c[@"taskbarDock"] : @"keep";
@@ -775,7 +776,8 @@ static NSString *keyKind(NSString *k) {
     [self gap];
 
     [self addHeader:@"Apps" note:nil];
-    [self addFull:setCard(@[setRow(@"Show app names", @"Icon and name for each app, like a classic task list.", [self switchFor:@"taskbarLabels" fallback:NO])])];
+    [self addFull:setCard(@[setRow(@"Show app names", @"Icon and name for each app, like a classic task list.", [self switchFor:@"taskbarLabels" fallback:NO]),
+                            setRow(@"Group windows", @"One button per app. Off: one per window, minimised ones too (uses Accessibility).", [self switchFor:@"taskbarGroup" fallback:NO])])];
     [self gap];
 
     [self addHeader:@"Tray" note:@"Scroll on the speaker to change the volume; click it to mute. Click the clock for a calendar. Right-click anything in the tray for its settings."];
