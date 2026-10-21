@@ -763,6 +763,8 @@ static NSString *keyKind(NSString *k) {
                             setRow(@"Size", nil, [self choice:@[@[@"Compact", @"compact"], @[@"Standard", @"normal"], @[@"Large", @"large"]] key:@"taskbarSize" fallback:@"normal"]),
                             setRow(@"Floating", @"Rounded, with a gap from the screen edge. Off: edge to edge.", [self switchFor:@"taskbarFloating" fallback:YES]),
                             setRow(@"Auto-hide", top ? @"Slides away until the pointer reaches the menu bar." : @"Slides away until the pointer touches the bottom edge.", [self switchFor:@"taskbarAutoHide" fallback:NO]),
+                            setRow(@"Keep windows above the bar", @"Windows you zoom, tile or stretch over the bar stop just above it. Uses Accessibility; not while auto-hiding.",
+                                   [self switchFor:@"taskbarFitWindows" fallback:YES]),
                             setRow(@"Hide in full screen", @"Steps aside for full-screen apps, videos, games and slideshows.", [self switchFor:@"taskbarHideFullScreen" fallback:YES])])];
     [self gap];
 

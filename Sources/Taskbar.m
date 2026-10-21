@@ -85,6 +85,10 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBVolume, CT
 @property (nonatomic, strong) NSPopover *calendar;
 @property (nonatomic) BOOL built;
 @property (nonatomic, copy) NSString *appliedDock;      // Dock mode last applied this session
+@property (nonatomic, strong) NSMutableArray *pendingFit;   // windows resized or created, checked once they settle
+@property (nonatomic, strong) NSTimer *fitTimer;
+@property (nonatomic) NSRect sweptFrame;                     // bar frame windows were last fitted to
+@property (nonatomic, strong) NSMapTable *refused;           // window → the frame it snapped back to after a trim
 @property (nonatomic, strong) NSArray<NSString *> *sampleApps, *sampleRunningApps;
 @property (nonatomic, copy) NSString *sampleActiveApp;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, id> *observers;               // pid → AXObserver: windows opening, closing, minimising
@@ -100,6 +104,7 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBVolume, CT
 - (NSImage *)iconForPath:(NSString *)p;
 - (BOOL)wants:(NSString *)key fallback:(BOOL)def;
 - (void)windowsChanged;
+- (void)windowNeedsFit:(id)win;
 @end
 
 static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r);
@@ -461,7 +466,11 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
 }
 
 - (void)apply {
+    if ([self.app.config[@"taskbarDock"] isEqual:@"reserve"] && !self.app.snapshotDir) {   // retired mode: carry it over as "off"
+        NSMutableDictionary *c = [self.app mutableConfig]; c[@"taskbarDock"] = @"off"; [self.app writeConfig:c];
+    }
     BOOL on = [self wants:@"taskbarEnabled" fallback:YES] && !self.app.snapshotDir;
+    [self loadMetrics];
     if (!self.app.snapshotDir) [self syncDock:on];
     if (!on) {
         [self.bar orderOut:nil]; [self.tip orderOut:nil];
@@ -470,7 +479,6 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
         setTaskbarReserve(nil, 0, NO);
         return;
     }
-    [self loadMetrics];
     [self build];
     [self applyMask];
     [self refreshStatus:YES];
@@ -497,6 +505,10 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
     if (self.fullScreenAway) { [self.bar orderOut:nil]; [self.tip orderOut:nil]; }
     else [self.bar orderFrontRegardless];
     [self.barView setNeedsDisplay:YES];
+    if ([self fitsWindows] && !NSEqualRects(self.sweptFrame, [self barFrame])) {   // first time, or the bar changed size or place
+        self.sweptFrame = [self barFrame];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self sweepWindows]; });
+    } else if (![self fitsWindows]) self.sweptFrame = NSZeroRect;
 }
 
 #pragma mark Full screen
@@ -571,56 +583,74 @@ static id dockValue(NSString *key) {
     CFPreferencesAppSynchronize(CFSTR("com.apple.dock"));
     return CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("com.apple.dock")));
 }
+// The Dock settings Centre may change, and so saves first and puts back exactly (NSNull: you never set it).
+static NSArray<NSString *> *dockKeys(void) { return @[@"autohide", @"autohide-delay", @"tilesize", @"magnification", @"orientation"]; }
+static BOOL sameDockValue(id a, id b) {
+    BOOL na = !a || a == [NSNull null], nb = !b || b == [NSNull null];
+    if (na || nb) return na && nb;
+    if ([a isKindOfClass:[NSNumber class]] && [b isKindOfClass:[NSNumber class]]) return fabs([a doubleValue] - [b doubleValue]) < 0.01;
+    return [[a description] isEqualToString:[b description]];
+}
+static NSString *dockWrite(NSString *key, id v) {
+    if (!v || v == [NSNull null]) return [NSString stringWithFormat:@"defaults delete com.apple.dock %@ 2>/dev/null", key];
+    if ([key isEqualToString:@"orientation"]) return [NSString stringWithFormat:@"defaults write com.apple.dock orientation -string %@", shellQuote([v description])];
+    if ([key isEqualToString:@"autohide"] || [key isEqualToString:@"magnification"])
+        return [NSString stringWithFormat:@"defaults write com.apple.dock %@ -bool %@", key, [v boolValue] ? @"true" : @"false"];
+    return [NSString stringWithFormat:@"defaults write com.apple.dock %@ -float %g", key, [v doubleValue]];
+}
 
 // Settings › Taskbar › "While the taskbar is on, the Dock…": keep | autohide | off.
-// The first change saves your own Dock settings; turning the taskbar off (or choosing "keep") puts them back exactly.
+// ("reserve", a short-lived mode that parked a visible Dock under the bar, now reads as "off".)
+- (NSString *)dockMode {
+    NSString *m = [self.app.config[@"taskbarDock"] isKindOfClass:[NSString class]] ? self.app.config[@"taskbarDock"] : @"keep";
+    return [m isEqualToString:@"reserve"] ? @"off" : m;
+}
+// Your Dock settings as they were before Centre touched them, with every key Centre may change.
+// Older saves held only autohide and delay; keys they lack were never changed, so their current values are yours.
+- (NSDictionary *)dockOriginal:(BOOL)create {
+    NSDictionary *o = [self.app.config[@"dockOriginal"] isKindOfClass:[NSDictionary class]] ? self.app.config[@"dockOriginal"] : nil;
+    if (!o && !create) return nil;
+    NSMutableDictionary *r = [o mutableCopy] ?: [NSMutableDictionary new];
+    if (o && !r[@"autohide-delay"]) r[@"autohide-delay"] = r[@"delay"] ?: [NSNull null];
+    [r removeObjectForKey:@"delay"];
+    for (NSString *k in dockKeys()) if (!r[k]) r[k] = dockValue(k) ?: [NSNull null];
+    id d = r[@"autohide-delay"];                                       // never treat Centre's own "never show" delay as yours
+    if ([d isKindOfClass:[NSNumber class]] && [d doubleValue] >= 100) r[@"autohide-delay"] = [NSNull null];
+    if (![r isEqualToDictionary:o ?: @{}]) { NSMutableDictionary *c = [self.app mutableConfig]; c[@"dockOriginal"] = r; [self.app writeConfig:c]; }
+    return r;
+}
 - (void)syncDock:(BOOL)barOn {
-    NSString *mode = [self.app.config[@"taskbarDock"] isKindOfClass:[NSString class]] ? self.app.config[@"taskbarDock"] : @"keep";
-    if (!barOn) mode = @"keep";
-    if ([mode isEqualToString:self.appliedDock]) return;            // apply runs on every config write; touch the Dock only on a real change
+    NSString *mode = barOn ? [self dockMode] : @"keep";
+    if ([mode isEqualToString:self.appliedDock]) return;              // apply runs on every config write; touch the Dock only on a real change
     self.appliedDock = mode;
-    NSDictionary *orig = [self.app.config[@"dockOriginal"] isKindOfClass:[NSDictionary class]] ? self.app.config[@"dockOriginal"] : nil;
-    BOOL hides = [dockValue(@"autohide") boolValue];
-    NSNumber *delay = [dockValue(@"autohide-delay") isKindOfClass:[NSNumber class]] ? dockValue(@"autohide-delay") : nil;
-    NSString *cmd = nil;
-    if ([mode isEqualToString:@"keep"]) {
-        if (!orig) return;
-        BOOL oh = [orig[@"autohide"] boolValue]; NSNumber *od = [orig[@"delay"] isKindOfClass:[NSNumber class]] ? orig[@"delay"] : nil;
-        cmd = [NSString stringWithFormat:@"defaults write com.apple.dock autohide -bool %@; %@; killall Dock",
-               oh ? @"true" : @"false", od ? [NSString stringWithFormat:@"defaults write com.apple.dock autohide-delay -float %g", od.doubleValue] : @"defaults delete com.apple.dock autohide-delay 2>/dev/null"];
-        NSMutableDictionary *c = [self.app mutableConfig]; [c removeObjectForKey:@"dockOriginal"]; [self.app writeConfig:c];
-    } else {
-        if (!orig) {                                                 // remember how you had it, once
-            NSMutableDictionary *c = [self.app mutableConfig];
-            c[@"dockOriginal"] = delay ? @{@"autohide": @(hides), @"delay": delay} : @{@"autohide": @(hides)};
-            [self.app writeConfig:c];
-            orig = c[@"dockOriginal"];
-        }
-        BOOL off = [mode isEqualToString:@"off"];
-        NSNumber *od = [orig[@"delay"] isKindOfClass:[NSNumber class]] && [orig[@"delay"] doubleValue] < 100 ? orig[@"delay"] : nil;
-        BOOL already = hides && (off ? delay.doubleValue >= 1000 : (delay == nil ? od == nil : (od && fabs(delay.doubleValue - od.doubleValue) < 0.01)));
-        if (already) return;
-        NSString *d = off ? @"defaults write com.apple.dock autohide-delay -float 1000"            // never comes back up
-                          : od ? [NSString stringWithFormat:@"defaults write com.apple.dock autohide-delay -float %g", od.doubleValue]
-                               : @"defaults delete com.apple.dock autohide-delay 2>/dev/null";
-        cmd = [NSString stringWithFormat:@"defaults write com.apple.dock autohide -bool true; %@; killall Dock", d];
-    }
+    BOOL keep = [mode isEqualToString:@"keep"];
+    NSDictionary *orig = [self dockOriginal:!keep];
+    if (!orig) return;                                                 // never changed: nothing to put back
+    NSMutableDictionary *want = [orig mutableCopy];
+    // Keys a mode doesn't name (icon size, magnification, position) are always yours, so anything Centre ever changed goes back.
+    if ([mode isEqualToString:@"autohide"]) want[@"autohide"] = @YES;
+    else if ([mode isEqualToString:@"off"]) { want[@"autohide"] = @YES; want[@"autohide-delay"] = @1000; }   // never comes back up
+    NSMutableArray *cmds = [NSMutableArray new];
+    for (NSString *k in dockKeys()) if (!sameDockValue(dockValue(k), want[k])) [cmds addObject:dockWrite(k, want[k])];
+    if (keep) { NSMutableDictionary *c = [self.app mutableConfig]; [c removeObjectForKey:@"dockOriginal"]; [self.app writeConfig:c]; }
+    if (!cmds.count) return;
+    [cmds addObject:@"killall Dock"];
     __weak CTaskbar *ws = self;
-    runShell(cmd, ^(NSString *o) {                                   // the Dock restarting changes the screen's usable area
+    runShell([cmds componentsJoinedByString:@"; "], ^(NSString *o) {   // the Dock restarting changes the screen's usable area
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [ws apply]; });
     });
 }
-
 // Quitting Centre (not a rebuild) gives you your Dock back, so you're never left without one.
 - (void)restoreDockNow {
-    NSDictionary *orig = [self.app.config[@"dockOriginal"] isKindOfClass:[NSDictionary class]] ? self.app.config[@"dockOriginal"] : nil;
+    NSDictionary *orig = [self dockOriginal:NO];
     if (!orig) return;
-    NSNumber *od = [orig[@"delay"] isKindOfClass:[NSNumber class]] ? orig[@"delay"] : nil;
-    NSString *cmd = [NSString stringWithFormat:@"defaults write com.apple.dock autohide -bool %@; %@; killall Dock",
-                     [orig[@"autohide"] boolValue] ? @"true" : @"false",
-                     od ? [NSString stringWithFormat:@"defaults write com.apple.dock autohide-delay -float %g", od.doubleValue] : @"defaults delete com.apple.dock autohide-delay 2>/dev/null"];
-    NSTask *t = [NSTask launchedTaskWithLaunchPath:@"/bin/sh" arguments:@[@"-c", cmd]];
-    [t waitUntilExit];
+    NSMutableArray *cmds = [NSMutableArray new];
+    for (NSString *k in dockKeys()) if (!sameDockValue(dockValue(k), orig[k])) [cmds addObject:dockWrite(k, orig[k])];
+    if (cmds.count) {
+        [cmds addObject:@"killall Dock"];
+        NSTask *t = [NSTask launchedTaskWithLaunchPath:@"/bin/sh" arguments:@[@"-c", [cmds componentsJoinedByString:@"; "]]];
+        [t waitUntilExit];
+    }
     NSMutableDictionary *c = [self.app mutableConfig]; [c removeObjectForKey:@"dockOriginal"];
     NSData *d = [NSJSONSerialization dataWithJSONObject:c options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
     [d writeToFile:self.app.configPath atomically:YES];
@@ -649,7 +679,8 @@ static id dockValue(NSString *key) {
         if (r.activationPolicy == NSApplicationActivationPolicyRegular && r != NSRunningApplication.currentApplication && !r.terminated && r.bundleURL) [running addObject:r];
     [running sortUsingComparator:^NSComparisonResult(NSRunningApplication *a, NSRunningApplication *b) { return [a.launchDate ?: [NSDate distantPast] compare:b.launchDate ?: [NSDate distantPast]]; }];
     BOOL perWindow = ![self wants:@"taskbarGroup" fallback:NO] && AXIsProcessTrusted();
-    NSDictionary<NSNumber *, NSArray *> *lists = perWindow ? [self watchWindows:running] : [self watchWindows:@[]];
+    BOOL observe = AXIsProcessTrusted() && (perWindow || [self wants:@"taskbarFitWindows" fallback:YES]);   // window buttons, or keeping windows clear
+    NSDictionary<NSNumber *, NSArray *> *lists = [self watchWindows:observe ? running : @[]];
     // One button per window (minimised ones too), or one per app when grouped. A pinned app's first window takes its pin slot.
     void (^addApp)(NSString *, NSRunningApplication *, BOOL) = ^(NSString *path, NSRunningApplication *r, BOOL pinned) {
         NSString *name = r.localizedName ?: [[NSFileManager defaultManager] displayNameAtPath:path].stringByDeletingPathExtension;
@@ -784,7 +815,10 @@ static id dockValue(NSString *key) {
 }
 
 static void axWindowEvent(AXObserverRef obs, AXUIElementRef el, CFStringRef note, void *ctx) {
-    [(__bridge CTaskbar *)ctx windowsChanged];
+    CTaskbar *tb = (__bridge CTaskbar *)ctx;
+    BOOL resized = CFEqual(note, kAXWindowResizedNotification), created = CFEqual(note, kAXWindowCreatedNotification);
+    if (resized || created) [tb windowNeedsFit:(__bridge id)el];
+    if (!resized) [tb windowsChanged];                                  // a resize alone doesn't change the buttons
 }
 // One observer per running app (needs Accessibility). App-level: windows created, focus moves. Per window: closed,
 // minimised, restored, renamed — re-adding an existing registration is a cheap no-op, so this runs on every rebuild.
@@ -803,11 +837,12 @@ static void axWindowEvent(AXObserverRef obs, AXUIElementRef el, CFStringRef note
                 CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(obs), kCFRunLoopCommonModes);
                 for (NSString *n in @[(id)kAXWindowCreatedNotification, (id)kAXFocusedWindowChangedNotification, (id)kAXMainWindowChangedNotification])
                     AXObserverAddNotification(obs, ae, (__bridge CFStringRef)n, (__bridge void *)self);
+                for (NSDictionary *w in appWindows(r)) [self windowNeedsFit:w[@"win"]];   // an app just launched may open over the bar
             } else obs = NULL;                                       // still list its windows; they just won't update live
         }
         NSArray *wins = appWindows(r); lists[key] = wins;
         if (obs) for (NSDictionary *w in wins)
-            for (NSString *n in @[(id)kAXUIElementDestroyedNotification, (id)kAXWindowMiniaturizedNotification, (id)kAXWindowDeminiaturizedNotification, (id)kAXTitleChangedNotification])
+            for (NSString *n in @[(id)kAXUIElementDestroyedNotification, (id)kAXWindowMiniaturizedNotification, (id)kAXWindowDeminiaturizedNotification, (id)kAXTitleChangedNotification, (id)kAXWindowResizedNotification])
                 AXObserverAddNotification(obs, (__bridge AXUIElementRef)w[@"win"], (__bridge CFStringRef)n, (__bridge void *)self);
         CFRelease(ae);
     }
@@ -818,6 +853,102 @@ static void axWindowEvent(AXObserverRef obs, AXUIElementRef el, CFStringRef note
     for (NSNumber *key in self.winOrder.allKeys) if (![alive containsObject:key]) [self.winOrder removeObjectForKey:key];
     return lists;
 }
+#pragma mark Keeping windows clear of the bar (Accessibility)
+
+// macOS lets only the Dock shrink the usable screen, so like ExtraDock and uBar, Centre trims windows itself:
+// any window zoomed, tiled, resized or opened over the bar is cut to end just above it (gap included).
+// It waits until the window has settled and the mouse is up, so it never fights a drag.
+- (BOOL)fitsWindows {
+    return self.built && self.tick && !self.app.snapshotDir && [self wants:@"taskbarFitWindows" fallback:YES] && AXIsProcessTrusted()
+        && ![self wants:@"taskbarAutoHide" fallback:NO] && !self.fullScreenAway;
+}
+- (void)windowNeedsFit:(id)win {
+    if (!win || ![self fitsWindows]) return;
+    if (!self.pendingFit) self.pendingFit = [NSMutableArray new];
+    if (![self.pendingFit containsObject:win]) [self.pendingFit addObject:win];
+    [self.fitTimer invalidate];
+    __weak CTaskbar *ws = self;
+    self.fitTimer = [NSTimer scheduledTimerWithTimeInterval:0.35 repeats:NO block:^(NSTimer *t) { [ws fitPending]; }];
+}
+- (void)fitPending {
+    self.fitTimer = nil;
+    if ([NSEvent pressedMouseButtons]) {                                // still dragging: look again shortly
+        __weak CTaskbar *ws = self;
+        self.fitTimer = [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:NO block:^(NSTimer *t) { [ws fitPending]; }];
+        return;
+    }
+    NSArray *wins = self.pendingFit; self.pendingFit = nil;
+    for (id w in wins) [self fitWindow:w];
+}
+- (void)sweepWindows {
+    if (![self fitsWindows]) return;
+    for (NSRunningApplication *r in [NSWorkspace sharedWorkspace].runningApplications)
+        if (r.activationPolicy == NSApplicationActivationPolicyRegular && r != NSRunningApplication.currentApplication && !r.hidden)
+            for (NSDictionary *w in appWindows(r)) [self fitWindow:w[@"win"]];
+}
+// An app that refuses the height (a minimum size, or size steps) would be trimmed forever. Remember the exact frame it
+// stayed at; skip only while it's still at that frame, so every new zoom or resize gets trimmed again.
+static CGRect axFrame(AXUIElementRef w) {
+    CFTypeRef pv = NULL, sv = NULL; CGPoint p = CGPointZero; CGSize sz = CGSizeZero;
+    BOOL ok = AXUIElementCopyAttributeValue(w, kAXPositionAttribute, &pv) == kAXErrorSuccess && pv && AXValueGetValue((AXValueRef)pv, kAXValueTypeCGPoint, &p);
+    ok = ok && AXUIElementCopyAttributeValue(w, kAXSizeAttribute, &sv) == kAXErrorSuccess && sv && AXValueGetValue((AXValueRef)sv, kAXValueTypeCGSize, &sz);
+    if (pv) CFRelease(pv);
+    if (sv) CFRelease(sv);
+    return ok ? CGRectMake(p.x, p.y, sz.width, sz.height) : CGRectNull;
+}
+- (BOOL)refusedAt:(id)win frame:(CGRect)r {
+    NSValue *v = [self.refused objectForKey:win];
+    return v && CGRectEqualToRect(NSRectToCGRect(v.rectValue), r);
+}
+- (void)checkTrim:(id)win wanted:(CGFloat)limit top:(BOOL)top {
+    CGRect now = axFrame((__bridge AXUIElementRef)win);
+    if (!self.refused) self.refused = [NSMapTable strongToStrongObjectsMapTable];   // keys compare with CFEqual
+    if (self.refused.count > 64) [self.refused removeAllObjects];
+    BOOL still = !CGRectIsNull(now) && (top ? CGRectGetMinY(now) < limit - 1 : CGRectGetMaxY(now) > limit + 1);
+    if (still) [self.refused setObject:[NSValue valueWithRect:NSRectFromCGRect(now)] forKey:win];
+    else [self.refused removeObjectForKey:win];
+}
+static BOOL axBool(AXUIElementRef w, CFStringRef attr) {
+    CFTypeRef v = NULL; BOOL on = NO;
+    if (AXUIElementCopyAttributeValue(w, attr, &v) == kAXErrorSuccess && v) { on = CFGetTypeID(v) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)v); CFRelease(v); }
+    return on;
+}
+- (void)fitWindow:(id)win {
+    if (![self fitsWindows] || !self.bar.visible) return;
+    AXUIElementRef w = (__bridge AXUIElementRef)win;
+    if (axBool(w, CFSTR("AXFullScreen")) || axBool(w, kAXMinimizedAttribute)) return;
+    CFTypeRef sub = NULL; AXUIElementCopyAttributeValue(w, kAXSubroleAttribute, &sub);
+    BOOL standard = sub && CFEqual(sub, kAXStandardWindowSubrole); if (sub) CFRelease(sub);
+    if (!standard) return;                                              // dialogs, sheets, panels and popovers are left alone
+    CGRect r = axFrame(w);
+    if (CGRectIsNull(r)) return;
+    CGPoint p = r.origin; CGSize sz = r.size;
+    // Accessibility uses top-left coordinates from the main display; the bar lives on that display.
+    NSRect bar = [self barFrame], scr = [self screen].frame;
+    CGFloat H = NSMaxY(NSScreen.screens.firstObject.frame);
+    CGFloat barTop = H - NSMaxY(bar), barBottom = H - NSMinY(bar), scrTop = H - NSMaxY(scr), scrBottom = H - NSMinY(scr);
+    if (CGRectGetMaxX(r) < NSMinX(bar) + 20 || CGRectGetMinX(r) > NSMaxX(bar) - 20) return;          // not over the bar
+    if (CGRectGetMinY(r) < scrTop - 2 || CGRectGetMaxY(r) > scrBottom + 2) return;                    // another display, or partly off screen on purpose
+    if (!gTop) {
+        CGFloat limit = barTop - gBarGap;
+        if (CGRectGetMaxY(r) <= limit + 1) { [self.refused removeObjectForKey:win]; return; }         // clear (apps like Brave apply a trim late)
+        if (limit - CGRectGetMinY(r) < 120) return;                                                    // too little room left
+        if ([self refusedAt:win frame:r]) return;
+        CGSize ns = CGSizeMake(sz.width, floor(limit - CGRectGetMinY(r)));
+        AXValueRef v = AXValueCreate(kAXValueTypeCGSize, &ns); AXUIElementSetAttributeValue(w, kAXSizeAttribute, v); CFRelease(v);
+        [self checkTrim:win wanted:limit top:NO];
+    } else {
+        CGFloat limit = barBottom + gBarGap;
+        if (CGRectGetMinY(r) >= limit - 1) { [self.refused removeObjectForKey:win]; return; }
+        if (CGRectGetMaxY(r) - limit < 120) return;
+        if ([self refusedAt:win frame:r]) return;
+        CGPoint np = CGPointMake(p.x, limit); CGSize ns = CGSizeMake(sz.width, floor(CGRectGetMaxY(r) - limit));
+        AXValueRef v = AXValueCreate(kAXValueTypeCGPoint, &np); AXUIElementSetAttributeValue(w, kAXPositionAttribute, v); CFRelease(v);
+        v = AXValueCreate(kAXValueTypeCGSize, &ns); AXUIElementSetAttributeValue(w, kAXSizeAttribute, v); CFRelease(v);
+        [self checkTrim:win wanted:limit top:YES];
+    }
+}
+
 // A burst of window events (a new window is created, focused and titled at once) rebuilds the bar once.
 - (void)windowsChanged {
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(rebuild) object:nil];
