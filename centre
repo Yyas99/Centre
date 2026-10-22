@@ -4,14 +4,75 @@
 #   ./centre build    force rebuild
 #   ./centre stop     quit Centre
 #   ./centre log      show recent Centre log lines
+#   ./centre restart  build if needed, then relaunch now
+#   ./centre test     run the self-test on the installed build
+#   ./centre shots    render the README screenshots into docs/
+#   ./centre snap     render every design snapshot into .agent/snaps/
+#   ./centre status   is it running, which build, last build result
+#   ./centre crash    the newest crash report, if any
+#   ./centre trace    Centre's own lifecycle log (launch, rebuild, relaunch, quit)
+# The build agent (installed on every build) runs any of these without Terminal or a running Centre:
+# drop a file named <id>.job containing the command into .agent/inbox; the output lands in .agent/out/<id>.log
+# and the exit code in .agent/out/<id>.exit.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/Centre.app"
 BIN="$APP/Contents/MacOS/Centre"
 SRCDIR="$DIR/Sources"
 
-if [ "$1" = "stop" ]; then pkill -x Centre 2>/dev/null || true; echo "Centre stopped"; exit 0; fi
-if [ "$1" = "log" ]; then log show --predicate 'process == "Centre"' --last 10m --style compact 2>/dev/null | tail -40; exit 0; fi
+AGENT="$DIR/.agent"
+APPRE='Centre\.app/Contents/MacOS/Centre$'   # the app itself; agent, self-test and render runs carry arguments
+mkdir -p "$AGENT/inbox" "$AGENT/out"
+
+# Run a Centre binary with a time limit (offscreen renders and self-tests must never hang a job).
+limited() {
+  local secs=$1; shift
+  "$@" & local p=$!
+  for i in $(seq 1 $((secs * 10))); do kill -0 $p 2>/dev/null || break; sleep 0.1; done
+  if kill -0 $p 2>/dev/null; then kill -9 $p 2>/dev/null; echo "Timed out after ${secs}s"; return 124; fi
+  wait $p
+}
+
+# The build agent: a LaunchAgent that runs this script for queued jobs. It is the Centre binary itself in
+# --agent mode, so it works with Centre's own permissions and needs nothing else installed.
+install_agent() {
+  local label=com.y.centre.agent pl="$HOME/Library/LaunchAgents/com.y.centre.agent.plist"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  local want
+  want=$(cat <<PL
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$label</string>
+  <key>ProgramArguments</key><array><string>$BIN</string><string>--agent</string><string>$DIR</string></array>
+  <key>QueueDirectories</key><array><string>$AGENT/inbox</string></array>
+  <key>StartInterval</key><integer>8</integer>
+  <key>StandardOutPath</key><string>$AGENT/agent.log</string>
+  <key>StandardErrorPath</key><string>$AGENT/agent.log</string>
+  <key>LimitLoadToSessionType</key><string>Aqua</string>
+</dict></plist>
+PL
+)
+  if [ "$(cat "$pl" 2>/dev/null)" != "$want" ]; then
+    printf '%s\n' "$want" > "$pl"
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+  fi
+  {
+    date
+    launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$pl" 2>&1 || true
+    launchctl print "gui/$(id -u)/$label" 2>&1 | grep -E 'state|path|last exit|runs|error' | head -12
+  } > "$AGENT/install.log" 2>&1 || true
+}
+
+case "$1" in
+  stop) pkill -f "$APPRE" 2>/dev/null || true; echo "Centre stopped"; exit 0 ;;
+  log) log show --predicate 'process == "Centre"' --last 10m --style compact 2>/dev/null | tail -60; exit 0 ;;
+  crash)
+    f=$(ls -t "$HOME/Library/Logs/DiagnosticReports"/Centre*.ips 2>/dev/null | head -1)
+    if [ -z "$f" ]; then echo "No crash reports"; else echo "$f"; head -c 12000 "$f"; fi; exit 0 ;;
+  agent-install) install_agent; echo "Agent installed"; exit 0 ;;
+  trace) tail -40 "$AGENT/trace.log" 2>/dev/null || echo "No trace yet"; exit 0 ;;
+esac
 
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -40,6 +101,15 @@ touch "$APP"   # nudge Finder/Dock icon cache
 
 stale() { [ ! -x "$BIN" ] || [ -n "$(find "$SRCDIR" \( -name '*.m' -o -name '*.h' \) -newer "$BIN" 2>/dev/null | head -1)" ]; }
 
+# One build at a time (Centre's own file watcher and the agent can both ask). A lock older than 5 minutes is stale.
+LOCK="$AGENT/build.lock"
+for i in $(seq 1 900); do
+  mkdir "$LOCK" 2>/dev/null && break
+  [ -n "$(find "$LOCK" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$LOCK" 2>/dev/null
+  sleep 0.2
+done
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+
 if [ "$1" = "build" ] || stale; then
   echo "Compiling Centre…"
   set -o pipefail
@@ -56,7 +126,6 @@ if [ "$1" = "build" ] || stale; then
   if ! wait $T; then echo "Self-test failed — keeping the previous build" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1; fi
 
   mv -f "$BIN.new" "$BIN"
-  "$BIN" --readme "$DIR/_shots" >/dev/null 2>&1 & # TEMP-SNAPSHOT
   if command -v codesign >/dev/null 2>&1; then
     # Sign with the local certificate from setup-signing.sh when it exists, so macOS keeps Centre's
     # permissions across rebuilds; otherwise fall back to an ad-hoc signature.
@@ -68,11 +137,32 @@ if [ "$1" = "build" ] || stale; then
   LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
   [ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
   echo "Built $APP"
+else
+  echo "Up to date"
 fi
+rmdir "$LOCK" 2>/dev/null || true
+install_agent
+
+case "$1" in
+  test) limited 20 "$BIN" --selftest; exit $? ;;
+  shots) rm -rf "$DIR/.agent/shots"; limited 90 "$BIN" --readme "$DIR/.agent/shots" >/dev/null 2>&1 || true
+         n=$(ls "$DIR/.agent/shots"/*.png 2>/dev/null | wc -l | tr -d ' ')
+         if [ "$n" -gt 0 ]; then cp -f "$DIR/.agent/shots"/*.png "$DIR/docs/"; echo "Rendered $n screenshots into docs/"; else echo "No screenshots rendered"; exit 1; fi
+         exit 0 ;;
+  snap) rm -rf "$AGENT/snaps"; limited 120 "$BIN" --snapshot "$AGENT/snaps" >/dev/null 2>&1 || true
+        echo "$(ls "$AGENT/snaps" 2>/dev/null | wc -l | tr -d ' ') snapshots in .agent/snaps"; exit 0 ;;
+  status)
+    if pgrep -f "$APPRE" >/dev/null; then echo "Running: yes"; else echo "Running: no"; fi
+    echo "Build: $(stat -f '%Sm' "$BIN" 2>/dev/null)"; echo "Sources newer than build: $(stale && echo yes || echo no)"
+    echo "Last build log:"; tail -5 "$DIR/build.log" 2>/dev/null; exit 0 ;;
+esac
 
 [ -n "$CENTRE_NO_LAUNCH" ] && exit 0   # in-app rebuild: the app relaunches itself
-pkill -x Centre 2>/dev/null || true
-for i in $(seq 1 30); do pgrep -x Centre >/dev/null || break; sleep 0.1; done   # wait for old one to exit
-pkill -9 -x Centre 2>/dev/null || true
+# From the agent, "build" only starts Centre if it isn't running: a running Centre picks up the new build by
+# itself as soon as its panel is closed. "restart" (or ./centre from Terminal) relaunches right away.
+if [ -n "$CENTRE_AGENT" ] && [ "$1" = "build" ] && pgrep -f "$APPRE" >/dev/null; then echo "Centre will switch to the new build when its panel is closed"; exit 0; fi
+pkill -f "$APPRE" 2>/dev/null || true
+for i in $(seq 1 30); do pgrep -f "$APPRE" >/dev/null || break; sleep 0.1; done   # wait for old one to exit
+pkill -9 -f "$APPRE" 2>/dev/null || true
 open "$APP"
 echo "Centre is running — press ⌘ Space."

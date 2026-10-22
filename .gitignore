@@ -7,6 +7,8 @@ signing.log
 *.bak
 _to_delete/
 .snapshots/
+.agent/
+_shots/
 .DS_Store
 
 # Personal notes, not part of the app

@@ -392,9 +392,20 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     return !b || [s compare:b] == NSOrderedDescending;   // a missing binary always counts as out of date
 }
 - (void)rebuild { [self rebuildQuietly:NO]; }
+// A build installed after this process started (by the agent, or by Terminal). It must have settled: the build
+// script signs the binary just after installing it, and holds its lock until then.
+- (BOOL)installedBuildIsNewer {
+    static NSDate *launched; static dispatch_once_t once;
+    NSString *bin = [NSBundle mainBundle].executablePath, *lock = [self.sourceDir stringByAppendingPathComponent:@".agent/build.lock"];
+    NSDate *now = [[[NSFileManager defaultManager] attributesOfItemAtPath:bin error:nil] fileModificationDate];
+    dispatch_once(&once, ^{ launched = now; });
+    if (!now || !launched || [now compare:launched] != NSOrderedDescending) return NO;
+    return -[now timeIntervalSinceNow] > 3 && ![[NSFileManager defaultManager] fileExistsAtPath:lock];
+}
 // Hand over to the fresh binary: a helper waits until this process has really exited, then opens the new build
 // (opening earlier would just wake the dying copy, or the new one would defer to it and quit).
 - (void)relaunch {
+    [self trace:@"relaunching into the new build"];
     self.relaunchPending = NO;
     [self saveClipHandoff];
     NSTask *t = [NSTask new]; t.launchPath = @"/bin/sh";
@@ -411,8 +422,11 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     if (self.rebuilding || ![[NSFileManager defaultManager] fileExistsAtPath:[dir stringByAppendingPathComponent:@"centre"]]) return;
     self.rebuilding = YES;
     NSDate *src = [self sourceDate];
-    runShell([NSString stringWithFormat:@"cd %@ && chmod +x centre && CENTRE_NO_LAUNCH=1 ./centre build 2>&1", shellQuote(dir)], ^(NSString *out) {
-        if ([out containsString:@"Built "] && ![out containsString:@"error:"]) {
+    [self trace:@"rebuilding"];
+    runShell([NSString stringWithFormat:@"cd %@ && chmod +x centre && CENTRE_NO_LAUNCH=1 ./centre 2>&1", shellQuote(dir)], ^(NSString *out) {
+        NSString *lastLine = [[out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] componentsSeparatedByString:@"\n"].lastObject;
+        [self trace:[@"rebuild finished: " stringByAppendingString:lastLine ?: @""]];
+        if (([out containsString:@"Built "] && ![out containsString:@"error:"]) || [self installedBuildIsNewer]) {   // or the agent built it first
             if (self.panel.visible || self.settings.window.visible) { self.relaunchPending = YES; return; }   // finish when you're done
             [self relaunch];
             return;
@@ -448,8 +462,21 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 }
 
 #pragma mark Lifecycle
+// Lifecycle trace for debugging (.agent/trace.log next to the app; the agent's "trace" job prints it).
+- (void)trace:(NSString *)what {
+    if (self.snapshotDir) return;
+    NSString *dir = [self.sourceDir stringByAppendingPathComponent:@".agent"], *p = [dir stringByAppendingPathComponent:@"trace.log"];
+    [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSDateFormatter *f = [NSDateFormatter new]; f.dateFormat = @"MM-dd HH:mm:ss";
+    NSString *line = [NSString stringWithFormat:@"%@  pid %d  %@\n", [f stringFromDate:[NSDate date]], getpid(), what];
+    NSFileHandle *h = [NSFileHandle fileHandleForWritingAtPath:p];
+    if (!h) { [line writeToFile:p atomically:NO encoding:NSUTF8StringEncoding error:nil]; return; }
+    if ([h seekToEndOfFile] > 200000) { [h truncateFileAtOffset:0]; }
+    [h writeData:[line dataUsingEncoding:NSUTF8StringEncoding]]; [h closeFile];
+}
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     if (self.snapshotDir) { [self runSnapshots]; return; }
+    [self trace:[NSString stringWithFormat:@"launched (sources newer: %@)", [self sourceIsNewer] ? @"yes" : @"no"]];
     if ([self sourceIsNewer]) { [self rebuild]; return; }          // a failed build falls back to -startNormally
     [self startNormally];
 }
@@ -457,6 +484,8 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 // with a Centre that has no panel, no shortcut and no file watcher.
 - (void)startNormally {
     if (self.panel) return;
+    [self installedBuildIsNewer];                 // remember which build this process is
+    [self trace:@"running"];
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.y.centre.show" object:nil queue:[NSOperationQueue mainQueue]
         usingBlock:^(NSNotification *note) { [self show]; }];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -485,6 +514,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     // Auto-rebuild: when anything in Sources/ changes, recompile and relaunch (only while the panel is hidden).
     [NSTimer scheduledTimerWithTimeInterval:4 repeats:YES block:^(NSTimer *t) {
         if (self.relaunchPending && !self.panel.visible && !self.settings.window.visible) { [self relaunch]; return; }
+        if (!self.rebuilding && !self.relaunchPending && [self installedBuildIsNewer]) { self.relaunchPending = YES; return; }   // the agent built it
         if (self.rebuilding || self.panel.visible || self.settings.window.visible || ![self sourceIsNewer]) return;
         NSDate *src = [self sourceDate];
         if (self.failedSource && src && [src isEqualToDate:self.failedSource]) return;   // same broken source: wait for the next save
@@ -502,6 +532,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)a hasVisibleWindows:(BOOL)f { [self show]; return NO; }
 - (void)applicationWillTerminate:(NSNotification *)n {
+    [self trace:self.rebuilding ? @"quitting for the new build" : @"quitting"];
     if (self.hotKeyRef) UnregisterEventHotKey(self.hotKeyRef);
     [self unregisterCommandHotKeys];
     [self.settings flushEdits];
