@@ -200,6 +200,7 @@ static void lockScreenNow(void) {
             } else showHUD(@"Copied · paste with ⌘V", @"doc.on.clipboard.fill");
         });
         i.altAction = ^{ copyText(c); showHUD(@"Copied", @"doc.on.clipboard.fill"); }; i.altHint = @"⌘↩ Copy";
+        i.previewText = c;
         [r addObject:i];
         if (++n >= kMaxRows) break;
     }
@@ -442,6 +443,11 @@ static void lockScreenNow(void) {
     } else if ([head isEqualToString:@"define"]) {
         self.modeLabel = @"Dictionary";
         [out addObjectsFromArray:[self defineItems:rest]];
+    } else if ([head isEqualToString:@"tab"] || [head isEqualToString:@"tabs"]) {                  // every open browser tab
+        self.modeLabel = @"Tabs";
+        [out addObjectsFromArray:[self tabItemsFor:rest.length ? rest : @"" limit:kMaxRows]];
+        if (!out.count) [out addObject:mk(self.browserTabs ? @"No matching tabs" : @"Reading your tabs…",
+                                          self.browserTabs ? @"Tabs from Brave, Chrome, Arc, Edge and Safari" : nil, @"Tab", @"square.on.square", nil)];
     } else if ([head isEqualToString:@"timer"] || [head isEqualToString:@"timers"]) {
         self.modeLabel = @"Timer";
         [out addObjectsFromArray:[self timerItems:rest]];
@@ -464,6 +470,8 @@ static void lockScreenNow(void) {
         [general addObjectsFromArray:[self folderItemsFor:q]];
         [general addObjectsFromArray:[self customItemsFor:q]];
         [general addObjectsFromArray:[self snippetItems:q]];
+        [general addObjectsFromArray:[self glanceItemsFor:q]];             // window sessions and the shelf
+        [general addObjectsFromArray:[self deckItemsFor:q]];               // notes and open browser tabs
         for (CItem *c in [self appContextItems]) { double s = fuzzyScore(q, c.title); if (s >= 0) { c.score = s - 10; [general addObject:c]; } }
         if (q.length >= 3) for (NSString *n in transformNames()) {           // "upper" → UPPERCASE the selection or clipboard
             BOOL prefix = NO;

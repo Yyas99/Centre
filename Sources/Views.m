@@ -16,8 +16,8 @@
 - (void)drawRect:(NSRect)r {
     // A cool, slightly lifted top fading to a deeper base: depth without a visible gradient band.
     NSGradient *g = cIsDark(self)
-        ? [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.135 green:0.142 blue:0.160 alpha:0.86]
-                                        endingColor:[NSColor colorWithSRGBRed:0.098 green:0.102 blue:0.116 alpha:0.90]]
+        ? [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.052 green:0.056 blue:0.064 alpha:0.78]     // obsidian glass
+                                        endingColor:[NSColor colorWithSRGBRed:0.036 green:0.039 blue:0.045 alpha:0.84]]
         : [[NSGradient alloc] initWithStartingColor:[NSColor colorWithSRGBRed:0.992 green:0.994 blue:0.998 alpha:0.90]
                                         endingColor:[NSColor colorWithSRGBRed:0.962 green:0.966 blue:0.974 alpha:0.92]];
     [g drawInRect:self.bounds angle:-90];
@@ -26,7 +26,7 @@
 
 @implementation CHairline
 - (NSView *)hitTest:(NSPoint)p { return nil; }
-- (void)drawRect:(NSRect)r { [[[NSColor labelColor] colorWithAlphaComponent:0.07] setFill]; NSRectFill(self.bounds); }
+- (void)drawRect:(NSRect)r { [[[NSColor labelColor] colorWithAlphaComponent:0.09] setFill]; NSRectFill(self.bounds); }
 @end
 
 @implementation CEdgeView
@@ -34,10 +34,10 @@
 - (void)drawRect:(NSRect)r {
     BOOL dark = cIsDark(self);
     NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:kRadius - 0.5 yRadius:kRadius - 0.5];
-    p.lineWidth = 1; [(dark ? [NSColor colorWithWhite:1 alpha:0.12] : [NSColor colorWithWhite:0 alpha:0.12]) setStroke]; [p stroke];
-    if (dark) {   // glass: a faint lit line along the top edge, fading out before the corners
-        NSColor *clear = [NSColor colorWithWhite:1 alpha:0], *lit = [NSColor colorWithWhite:1 alpha:0.12];
-        NSGradient *g = [[NSGradient alloc] initWithColorsAndLocations:clear, 0.0, lit, 0.2, lit, 0.8, clear, 1.0, nil];
+    p.lineWidth = 1; [(dark ? [NSColor colorWithWhite:1 alpha:0.085] : [NSColor colorWithWhite:0 alpha:0.12]) setStroke]; [p stroke];
+    if (dark) {   // glass: one lit line along the top edge, fading out into the corners
+        NSColor *clear = [NSColor colorWithWhite:1 alpha:0], *lit = [NSColor colorWithWhite:1 alpha:0.17];
+        NSGradient *g = [[NSGradient alloc] initWithColorsAndLocations:clear, 0.0, lit, 0.16, lit, 0.84, clear, 1.0, nil];
         [g drawInRect:NSMakeRect(kRadius * 0.6, self.bounds.size.height - 2, self.bounds.size.width - kRadius * 1.2, 1) angle:0];
     }
 }
@@ -45,7 +45,7 @@
 
 // Quiet band behind the footer hints.
 @implementation CFooterBar
-- (void)drawRect:(NSRect)r { [(cIsDark(self) ? [NSColor colorWithWhite:0 alpha:0.12] : [NSColor colorWithWhite:0 alpha:0.022]) setFill]; NSRectFill(self.bounds); }
+- (void)drawRect:(NSRect)r { [(cIsDark(self) ? [NSColor colorWithWhite:1 alpha:0.025] : [NSColor colorWithWhite:0 alpha:0.022]) setFill]; NSRectFill(self.bounds); }   // its own lifted band
 @end
 
 // Active-mode token at the right of the search field ("Clipboard", "Files", "youtube.com"…).
@@ -152,12 +152,13 @@
 
 // ---------- Most-used grid ----------
 @implementation CGridView
+- (CGFloat)x0 { return floor((self.bounds.size.width - (CGFloat)self.items.count * kCellW) / 2); }   // the row of apps sits centred
 - (void)reload {
     for (NSView *v in [self.subviews copy]) [v removeFromSuperview];
     NSInteger n = (NSInteger)self.items.count;
     for (NSInteger i = 0; i < n; i++) {
         CItem *it = self.items[i];
-        NSView *cell = [[NSView alloc] initWithFrame:NSMakeRect(kGridX + i * kCellW, 0, kCellW, kCellH)];
+        NSView *cell = [[NSView alloc] initWithFrame:NSMakeRect([self x0] + i * kCellW, 0, kCellW, kCellH)];
         NSImageView *iv = [[NSImageView alloc] initWithFrame:NSMakeRect((kCellW - 50) / 2, kCellH - 50 - 8, 50, 50)];
         iv.imageScaling = NSImageScaleProportionallyUpOrDown;
         NSImage *img = self.iconFor ? self.iconFor(it) : nil;
@@ -185,16 +186,17 @@
 }
 - (void)drawRect:(NSRect)r {
     if (_selected >= 0 && _selected < (NSInteger)self.items.count) {
-        NSRect b = NSMakeRect(kGridX + _selected * kCellW + 4, 1, kCellW - 8, kCellH - 2);
-        [cSelFill(self) setFill];
+        NSRect b = NSMakeRect([self x0] + _selected * kCellW + 4, 1, kCellW - 8, kCellH - 2);
+        BOOL dark = cIsDark(self);
+        [(dark ? cIceFill() : cSelFill(self)) setFill];                    // the one lit thing: where you are
         [[NSBezierPath bezierPathWithRoundedRect:b xRadius:16 yRadius:16] fill];
         NSBezierPath *e = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:15.5 yRadius:15.5];
-        e.lineWidth = 1; [cSelEdge(self) setStroke]; [e stroke];
+        e.lineWidth = 1; [(dark ? cIceEdge() : cSelEdge(self)) setStroke]; [e stroke];
     }
 }
 - (void)mouseDown:(NSEvent *)e {
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-    NSInteger i = (NSInteger)floor((p.x - kGridX) / kCellW);
+    NSInteger i = (NSInteger)floor((p.x - [self x0]) / kCellW);
     if (i >= 0 && i < (NSInteger)self.items.count && self.onPick) self.onPick(i);
 }
 - (void)updateTrackingAreas {
@@ -205,7 +207,7 @@
 }
 - (void)mouseMoved:(NSEvent *)e {
     NSPoint p = [self convertPoint:e.locationInWindow fromView:nil];
-    NSInteger i = (NSInteger)floor((p.x - kGridX) / kCellW);
+    NSInteger i = (NSInteger)floor((p.x - [self x0]) / kCellW);
     if (i >= 0 && i < (NSInteger)self.items.count && self.onHover) self.onHover(i);
 }
 @end
@@ -215,23 +217,18 @@ static NSDictionary *pillAttrs(BOOL sel) {
     return @{NSFontAttributeName: [NSFont systemFontOfSize:12.5 weight:NSFontWeightMedium],
              NSForegroundColorAttributeName: sel ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.78]};
 }
-static CGFloat pillWidth(CItem *it) { return 12 + 16 + 7 + ceil([it.title ?: @"" sizeWithAttributes:pillAttrs(NO)].width) + 14; }
+// Pinned commands sit on the app grid's own columns, as compact tiles: one rhythm from the apps down.
 NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
-    CGFloat x = kInset; NSInteger n = 0;
-    for (CItem *it in items) { CGFloat w = pillWidth(it); if (x + w > width - kInset) break; x += w + 8; n++; }
-    return n;
+    NSInteger cols = (NSInteger)floor((width - 2 * kGridX) / kCellW);
+    return MIN((NSInteger)items.count, cols);
 }
 @implementation CQuickStrip
 - (NSDictionary *)attrs:(BOOL)sel { return pillAttrs(sel); }
 - (NSArray<NSValue *> *)pillRects {
     NSMutableArray *r = [NSMutableArray new];
-    CGFloat x = kInset, H = self.bounds.size.height, h = 32;
-    for (CItem *it in self.items) {
-        CGFloat w = pillWidth(it);
-        if (x + w > self.bounds.size.width - kInset) break;          // never overflow the panel
-        [r addObject:[NSValue valueWithRect:NSMakeRect(x, floor((H - h) / 2), w, h)]];
-        x += w + 8;
-    }
+    NSInteger n = quickStripFit(self.items, self.bounds.size.width);
+    CGFloat x0 = floor((self.bounds.size.width - (CGFloat)n * kCellW) / 2);      // centred, on the same column width as the apps
+    for (NSInteger i = 0; i < n; i++) [r addObject:[NSValue valueWithRect:NSMakeRect(x0 + i * kCellW, 0, kCellW, self.bounds.size.height)]];
     return r;
 }
 - (void)setItems:(NSArray<CItem *> *)items { _items = items; [self setNeedsDisplay:YES]; }
@@ -239,24 +236,26 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
 - (void)drawRect:(NSRect)dirty {
     BOOL dark = cIsDark(self);
     NSArray *rects = [self pillRects];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.alignment = NSTextAlignmentCenter; ps.lineBreakMode = NSLineBreakByTruncatingTail;
     for (NSUInteger i = 0; i < rects.count; i++) {
         NSRect b = [rects[i] rectValue]; BOOL sel = (NSInteger)i == self.selected;
-        NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:(b.size.height - 1) / 2 yRadius:(b.size.height - 1) / 2];
-        [(sel ? cSelFill(self) : (dark ? [NSColor colorWithWhite:1 alpha:0.055] : [NSColor colorWithWhite:0 alpha:0.04])) setFill]; [p fill];
-        if (sel) { p.lineWidth = 1; [cSelEdge(self) setStroke]; [p stroke]; }
+        // A glass well, smaller than an app icon so the eye reads "commands" below "apps".
+        NSRect well = NSMakeRect(round(NSMidX(b) - 18), NSMaxY(b) - 8 - 36, 36, 36);
+        NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(well, 0.5, 0.5) xRadius:11 yRadius:11];
+        [(sel ? (dark ? cIceFill() : cSelFill(self)) : (dark ? [NSColor colorWithWhite:1 alpha:0.05] : [NSColor colorWithWhite:0 alpha:0.04])) setFill]; [p fill];
+        p.lineWidth = 1; [(sel ? (dark ? cIceEdge() : cSelEdge(self)) : (dark ? [NSColor colorWithWhite:1 alpha:0.085] : [NSColor colorWithWhite:0 alpha:0.06])) setStroke]; [p stroke];
         CItem *it = self.items[i];
-        NSArray<NSColor *> *tc = tileColors(it.kind);
-        NSColor *tint = [it.kind isEqualToString:@"System"] || [it.kind isEqualToString:@"Centre"] ? [NSColor secondaryLabelColor] : (dark ? tc[0] : tc[1]);
-        NSImage *g = it.symbol ? tintedSymbol(it.symbol, 12, tint) : nil;
+        NSColor *tint = sel ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.78];
+        NSImage *g = it.symbol ? tintedSymbol(it.symbol, 14, tint) : nil;
         if (!g && self.iconFor) g = self.iconFor(it);                 // pinned apps, folders and files use their real icons
-        if (g.template) g = tintedSymbol(it.symbol ?: @"circle", 12, tint);
-        NSSize gs = g.size.width > 0 ? g.size : NSMakeSize(16, 16); CGFloat k = 16.0 / MAX(MAX(gs.width, gs.height), 1);
-        if (it.symbol) k = MIN(1.0, k);
-        NSRect ir = NSMakeRect(b.origin.x + 12 + (16 - gs.width * k) / 2, floor(NSMidY(b) - gs.height * k / 2), gs.width * k, gs.height * k);
+        if (g.template) g = tintedSymbol(it.symbol ?: @"circle", 14, tint);
+        NSSize gs = g.size.width > 0 ? g.size : NSMakeSize(18, 18);
+        CGFloat box = it.symbol ? 18 : 22, k = MIN(box / MAX(MAX(gs.width, gs.height), 1), it.symbol ? 1.0 : 10.0);
+        NSRect ir = NSMakeRect(round(NSMidX(well) - gs.width * k / 2), round(NSMidY(well) - gs.height * k / 2), gs.width * k, gs.height * k);
         [g drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
-        ir = NSMakeRect(b.origin.x + 12, 0, 16, 0);
-        NSDictionary *a = [self attrs:sel]; NSSize ts = [it.title sizeWithAttributes:a];
-        [it.title drawAtPoint:NSMakePoint(NSMaxX(ir) + 7, NSMidY(b) - ts.height / 2) withAttributes:a];
+        NSDictionary *a = @{NSFontAttributeName: [NSFont systemFontOfSize:10.5 weight:sel ? NSFontWeightSemibold : NSFontWeightMedium],
+                            NSForegroundColorAttributeName: sel ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.6], NSParagraphStyleAttributeName: ps};
+        [it.title drawInRect:NSMakeRect(NSMinX(b) + 4, NSMinY(b) + 6, b.size.width - 8, 14) withAttributes:a];
     }
 }
 - (NSInteger)indexAt:(NSEvent *)e {
@@ -277,6 +276,11 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
 @end
 
 // ---------- Home sections: Clipboard / Recent Files / Recent Commands ----------
+@interface CHomeList () <NSDraggingSource>
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, CItem *> *rowItems;
+@property (nonatomic) NSInteger downIndex, dragIndex;
+@property (nonatomic) NSPoint downAt;
+@end
 @implementation CHomeList
 - (BOOL)isFlipped { return YES; }
 - (CGFloat)fittingHeight {
@@ -287,6 +291,7 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
 - (void)reload {
     for (NSView *v in [self.subviews copy]) [v removeFromSuperview];
     CGFloat y = 0, W = self.bounds.size.width; NSInteger idx = self.base;
+    self.rowItems = [NSMutableDictionary new]; self.downIndex = -1;
     for (id e in self.entries) {
         if ([e isKindOfClass:[NSString class]]) {
             NSTextField *h = [NSTextField labelWithAttributedString:sectionTitle(e)];
@@ -295,7 +300,7 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
         } else {
             CItem *it = e;
             CRowView *r = [[CRowView alloc] initWithFrame:NSMakeRect(0, y, W, kHomeRowH)];
-            r.iconSize = 22; r.globalIndex = idx++; r.autoresizingMask = NSViewWidthSizable;
+            r.iconSize = 22; r.globalIndex = idx; self.rowItems[@(idx)] = it; idx++; r.autoresizingMask = NSViewWidthSizable;
             [r setTitle:it.title subtitle:it.subtitle];
             NSImage *img = self.iconFor ? self.iconFor(it) : nil;
             r.iconView.image = img; r.iconView.contentTintColor = img.template ? [NSColor secondaryLabelColor] : nil;
@@ -320,7 +325,36 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
     return -1;
 }
 - (BOOL)mouseDownCanMoveWindow { return NO; }
-- (void)mouseDown:(NSEvent *)e { NSInteger i = [self indexAt:e]; if (i >= 0 && self.onPick) self.onPick(i); }
+// Rows that can be dragged out (shelf items) run on mouse-up instead, so a drag never also triggers them.
+- (void)mouseDown:(NSEvent *)e {
+    NSInteger i = [self indexAt:e]; if (i < 0) return;
+    if (self.rowItems[@(i)].dragObject) { self.downIndex = i; self.downAt = e.locationInWindow; return; }
+    if (self.onPick) self.onPick(i);
+}
+- (void)mouseDragged:(NSEvent *)e {
+    if (self.downIndex < 0) return;
+    if (hypot(e.locationInWindow.x - self.downAt.x, e.locationInWindow.y - self.downAt.y) < 4) return;
+    CItem *it = self.rowItems[@(self.downIndex)];
+    NSView *row = nil; for (NSView *v in self.subviews) if ([v isKindOfClass:[CRowView class]] && ((CRowView *)v).globalIndex == self.downIndex) row = v;
+    self.dragIndex = self.downIndex; self.downIndex = -1;
+    if (!it.dragObject || !row) return;
+    NSDraggingItem *di = [[NSDraggingItem alloc] initWithPasteboardWriter:it.dragObject];
+    NSImage *img = self.iconFor ? self.iconFor(it) : nil;
+    NSRect fr = NSMakeRect(NSMinX(row.frame) + 12, NSMinY(row.frame) + 8, 28, 28);
+    [di setDraggingFrame:fr contents:img ?: [NSImage imageWithSystemSymbolName:@"doc" accessibilityDescription:nil]];
+    [self beginDraggingSessionWithItems:@[di] event:e source:self];
+}
+- (void)mouseUp:(NSEvent *)e {
+    NSInteger i = self.downIndex; self.downIndex = -1;
+    if (i >= 0 && [self indexAt:e] == i && self.onPick) self.onPick(i);
+}
+- (NSDragOperation)draggingSession:(NSDraggingSession *)s sourceOperationMaskForDraggingContext:(NSDraggingContext)c {
+    return c == NSDraggingContextOutsideApplication ? NSDragOperationCopy | NSDragOperationGeneric : NSDragOperationNone;
+}
+- (void)draggingSession:(NSDraggingSession *)s endedAtPoint:(NSPoint)p operation:(NSDragOperation)op {
+    if (op != NSDragOperationNone && self.onDragOut) self.onDragOut(self.dragIndex);
+    self.dragIndex = -1;
+}
 - (void)mouseMoved:(NSEvent *)e { NSInteger i = [self indexAt:e]; if (i >= 0 && self.onHover) self.onHover(i); }
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
@@ -329,6 +363,38 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
     [self addTrackingArea:self.hoverArea];
 }
 @end
+@implementation CAmbient
+- (NSView *)hitTest:(NSPoint)p { return nil; }
+- (void)setSegments:(NSArray<NSArray<NSString *> *> *)s {
+    if ([s isEqualToArray:_segments]) return;
+    _segments = [s copy]; [self setNeedsDisplay:YES];
+}
+- (void)drawRect:(NSRect)r {
+    CGFloat H = self.bounds.size.height, room = self.bounds.size.width - 2 * kInset, gap = 26;
+    NSColor *dim = [NSColor colorWithWhite:1 alpha:0.50], *glyph = [NSColor colorWithWhite:1 alpha:0.40];
+    NSDictionary *lead = @{NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:0.86]};
+    NSDictionary *rest = @{NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:11.5 weight:NSFontWeightMedium], NSForegroundColorAttributeName: dim};
+    // Measure first: keep what fits, then centre the line as a whole.
+    NSMutableArray *parts = [NSMutableArray new]; CGFloat total = 0;
+    for (NSArray<NSString *> *seg in self.segments) {
+        NSDictionary *a = parts.count == 0 ? lead : rest;
+        NSImage *g = seg[0].length ? tintedSymbol(seg[0], 10, glyph) : nil;
+        NSSize ts = [seg[1] sizeWithAttributes:a];
+        CGFloat w = (g ? g.size.width + 6 : 0) + ts.width, add = (parts.count ? gap : 0) + w;
+        if (total + add > room) break;
+        total += add; [parts addObject:@[seg[1], a, g ?: [NSNull null], @(ts.width), @(ts.height)]];
+    }
+    CGFloat x = floor((self.bounds.size.width - total) / 2);
+    for (NSUInteger i = 0; i < parts.count; i++) {
+        NSArray *p = parts[i];
+        if (i > 0) { [[NSColor colorWithWhite:1 alpha:0.10] setFill]; NSRectFill(NSMakeRect(x - gap / 2, floor(H / 2) - 4, 1, 9)); }
+        if (p[2] != [NSNull null]) { NSImage *g = p[2]; [g drawInRect:NSMakeRect(x, round(H / 2 - g.size.height / 2), g.size.width, g.size.height)]; x += g.size.width + 6; }
+        [p[0] drawAtPoint:NSMakePoint(x, round(H / 2 - [p[4] doubleValue] / 2)) withAttributes:p[1]];
+        x += [p[3] doubleValue] + gap;
+    }
+}
+@end
+
 @implementation CMediaView
 - (NSTextField *)timeLabel:(NSTextAlignment)al {
     NSTextField *l = [NSTextField labelWithString:@""];
@@ -345,7 +411,9 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
         _prevB = [self btn:@"backward.fill" size:14 tag:5];
         _playB = [self btn:@"play.fill" size:19 tag:2];
         _nextB = [self btn:@"forward.fill" size:14 tag:4];
-        for (NSView *v in @[_art, _titleL, _subL, _elapsedL, _remainL, _prevB, _playB, _nextB]) [self addSubview:v];
+        _closeB = [NSButton buttonWithImage:symSize(@"xmark", 8.5) target:self action:@selector(closeTapped)];   // hide until you play again
+        _closeB.bordered = NO; _closeB.contentTintColor = [NSColor colorWithWhite:1 alpha:0.32]; _closeB.toolTip = @"Hide until something plays again";
+        for (NSView *v in @[_art, _titleL, _subL, _elapsedL, _remainL, _prevB, _playB, _nextB, _closeB]) [self addSubview:v];
         _progress = -1;
     }
     return self;
@@ -357,25 +425,28 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
     return b;
 }
 - (void)tap:(NSButton *)b { if (self.onCommand) self.onCommand((int)b.tag); }
+- (void)closeTapped { if (self.onClose) self.onClose(); }
 - (void)setPlaying:(BOOL)p { self.playB.image = symSize(p ? @"pause.fill" : @"play.fill", 19); }
-- (NSRect)card { return NSMakeRect(10, 6, self.bounds.size.width - 20, self.bounds.size.height - 12); }
+- (NSRect)card { return NSMakeRect(12, 6, self.bounds.size.width - 24, self.bounds.size.height - 12); }
 // Track rect between the two time labels; the hit area is taller than the drawn bar.
-- (NSRect)barRect { return NSMakeRect(NSMaxX(self.elapsedL.frame) + 6, NSMinY([self card]) + 18, MAX(0, NSMinX(self.remainL.frame) - NSMaxX(self.elapsedL.frame) - 12), 4); }
+- (NSRect)barRect { return NSMakeRect(NSMaxX(self.elapsedL.frame) + 6, NSMinY([self card]) + 20, MAX(0, NSMinX(self.remainL.frame) - NSMaxX(self.elapsedL.frame) - 12), 4); }
 - (NSRect)barHitRect { return NSInsetRect([self barRect], -4, -8); }
 - (void)layout {
     [super layout];
     NSRect c = [self card];
-    self.art.frame = NSMakeRect(c.origin.x + 12, c.origin.y + floor((c.size.height - 56) / 2), 56, 56);
+    self.art.frame = NSMakeRect(c.origin.x + 16, c.origin.y + floor((c.size.height - 60) / 2), 60, 60);
     CGFloat ctrlW = 3 * 34 + 4;
-    CGFloat tx = NSMaxX(self.art.frame) + 14, tw = NSMaxX(c) - ctrlW - tx - 20;
-    self.titleL.frame = NSMakeRect(tx, NSMaxY(c) - 14 - 18, tw, 18);
-    self.subL.frame = NSMakeRect(tx, NSMaxY(c) - 14 - 18 - 17, tw, 16);
-    self.elapsedL.frame = NSMakeRect(tx, c.origin.y + 13, 46, 14);
-    self.remainL.frame = NSMakeRect(tx + tw - 50, c.origin.y + 13, 50, 14);
-    CGFloat cy = NSMidY(c) - 17, x = NSMaxX(c) - 12 - 34;
+    CGFloat tx = NSMaxX(self.art.frame) + 16, tw = NSMaxX(c) - ctrlW - tx - 24;
+    self.titleL.frame = NSMakeRect(tx, NSMaxY(c) - 17 - 18, tw, 18);
+    self.subL.frame = NSMakeRect(tx, NSMaxY(c) - 17 - 18 - 17, tw, 16);
+    self.elapsedL.frame = NSMakeRect(tx, c.origin.y + 15, 46, 14);
+    self.remainL.frame = NSMakeRect(tx + tw - 50, c.origin.y + 15, 50, 14);
+    CGFloat cy = NSMidY(c) - 17, x = NSMaxX(c) - 16 - 34;
     self.nextB.frame = NSMakeRect(x, cy, 34, 34); x -= 35;
     self.playB.frame = NSMakeRect(x, cy, 34, 34); x -= 35;
     self.prevB.frame = NSMakeRect(x, cy, 34, 34);
+    self.closeB.frame = NSMakeRect(NSMaxX(c) - 22, NSMaxY(c) - 21, 16, 16);
+    self.closeB.hidden = self.onClose == nil;
 }
 - (void)setElapsed:(double)el duration:(double)d {
     self.duration = d;
@@ -392,10 +463,10 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
 }
 - (void)drawRect:(NSRect)r {
     NSRect c = [self card]; BOOL dark = cIsDark(self);
-    [(dark ? [NSColor colorWithWhite:1 alpha:0.06] : [NSColor colorWithWhite:0 alpha:0.04]) setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:c xRadius:12 yRadius:12] fill];
-    NSBezierPath *ce = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(c, 0.5, 0.5) xRadius:11.5 yRadius:11.5];
-    ce.lineWidth = 1; [cSelEdge(self) setStroke]; [ce stroke];
+    [(dark ? [NSColor colorWithWhite:1 alpha:0.035] : [NSColor colorWithWhite:0 alpha:0.04]) setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:c xRadius:16 yRadius:16] fill];
+    NSBezierPath *ce = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(c, 0.5, 0.5) xRadius:15.5 yRadius:15.5];
+    ce.lineWidth = 1; [(dark ? (self.accent ? [self.accent colorWithAlphaComponent:0.28] : [NSColor colorWithWhite:1 alpha:0.065]) : cSelEdge(self)) setStroke]; [ce stroke];
     if (self.progress < 0 || self.duration <= 0) return;
     BOOL big = self.hoverBar || self.scrubbing;
     NSRect t = [self barRect]; if (big) t = NSInsetRect(t, 0, -1);
@@ -403,7 +474,7 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width) {
     [(dark ? [NSColor colorWithWhite:1 alpha:0.14] : [NSColor colorWithWhite:0 alpha:0.12]) setFill];
     [[NSBezierPath bezierPathWithRoundedRect:t xRadius:rad yRadius:rad] fill];
     NSRect f = t; f.size.width = MAX(t.size.height, t.size.width * self.progress);
-    [cAccent() setFill]; [[NSBezierPath bezierPathWithRoundedRect:f xRadius:rad yRadius:rad] fill];
+    [(self.accent ?: cAccent()) setFill]; [[NSBezierPath bezierPathWithRoundedRect:f xRadius:rad yRadius:rad] fill];   // lit by the artwork
     if (big) {   // knob
         CGFloat kx = NSMinX(t) + t.size.width * self.progress;
         NSRect k = NSMakeRect(kx - 6, NSMidY(t) - 6, 12, 12);

@@ -11,8 +11,8 @@
 @end
 
 // Settings tokens, shared with the launcher: the same cool surfaces, ice accent and tracked section labels.
-static NSColor *setSurface(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.112 green:0.117 blue:0.132 alpha:1] : [NSColor colorWithSRGBRed:0.955 green:0.958 blue:0.967 alpha:1]; }
-static NSColor *setCardFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.152 green:0.158 blue:0.176 alpha:1] : [NSColor whiteColor]; }
+static NSColor *setSurface(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.047 green:0.051 blue:0.059 alpha:1] : [NSColor colorWithSRGBRed:0.955 green:0.958 blue:0.967 alpha:1]; }
+static NSColor *setCardFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.082 green:0.087 blue:0.098 alpha:1] : [NSColor whiteColor]; }
 static NSColor *setCardEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithWhite:1 alpha:0.075] : [NSColor colorWithWhite:0 alpha:0.075]; }
 static NSColor *setDivider(NSView *v) { return cIsDark(v) ? [NSColor colorWithWhite:1 alpha:0.065] : [NSColor colorWithWhite:0 alpha:0.07]; }
 
@@ -504,7 +504,16 @@ static NSArray *searchEngines(void) {
 
     [self addHeader:@"Behaviour" note:nil];
     [self addFull:setCard(@[setRow(@"Clipboard history", @"Last 100 copied texts, memory only. Type clip.", [self switchFor:@"clipboardHistory" fallback:YES]),
-                            setRow(@"File results", @"Include Spotlight file matches in search.", [self switchFor:@"fileResults" fallback:YES])])];
+                            setRow(@"File results", @"Include Spotlight file matches in search.", [self switchFor:@"fileResults" fallback:YES]),
+                            setRow(@"Preview", @"Rest on a file or clipboard entry to see it beside the panel.", [self switchFor:@"previewFiles" fallback:YES]),
+                            setRow(@"Open tabs", @"Search your browser tabs by title or address; ↩ jumps to the tab.", [self switchFor:@"tabSearch" fallback:YES]),
+                            setRow(@"Status line", @"Time, timer, next event, battery and network under the search field.", [self switchFor:@"ambientLine" fallback:YES])])];
+    [self gap];
+
+    [self addHeader:@"Glance and shelf" note:@"Tap your shortcut to open Centre; hold it for a glance that disappears when you let go. While you drag anything, a drop zone appears at the top: what you drop waits on Home until you paste it (↩) or drag it out. Type “save session Study” to remember your open windows, then “Study” to bring them back."];
+    [self addFull:setCard(@[setRow(@"Hold for a glance", @"Time, next event, music, battery and your last copy.", [self switchFor:@"holdToPeek" fallback:YES]),
+                            setRow(@"Next event in the glance", @"Reads your calendar; macOS asks once.", [self switchFor:@"peekCalendar" fallback:YES]),
+                            setRow(@"Shelf drop zone", @"Shows while you drag files, links, text or images.", [self switchFor:@"shelfDropZone" fallback:YES])])];
     [self gap];
 
     // Browser details only matter once YouTube Music control is on.
@@ -786,7 +795,8 @@ static NSString *keyKind(NSString *k) {
 
     [self addHeader:@"Tray" note:@"Scroll on the speaker to change the volume; click it to mute. Click the clock for a calendar. Right-click anything in the tray for its settings."];
     [self addFull:setCard(@[setRow(@"Clock", @"Off: the calendar is still in any tray item's right-click menu.", [self switchFor:@"taskbarClock" fallback:YES]),
-                            setRow(@"Now playing", @"Artwork and title; click to play or pause.", [self switchFor:@"taskbarMedia" fallback:YES]),
+                            setRow(@"Now playing", @"Artwork and title from any app, or YouTube Music; click for the player.", [self switchFor:@"taskbarMedia" fallback:YES]),
+                            setRow(@"Menu bar icons", @"Copies of every menu bar icon; click one to open it at the top. Needs Screen Recording.", [self switchFor:@"taskbarMenuBar" fallback:NO]),
                             setRow(@"Music controls", @"Previous, play or pause, and next, beside what's playing.", [self switchFor:@"taskbarMediaControls" fallback:YES]),
                             setRow(@"Volume", nil, [self switchFor:@"taskbarVolume" fallback:YES]),
                             setRow(@"Wi-Fi", nil, [self switchFor:@"taskbarWifi" fallback:YES]),

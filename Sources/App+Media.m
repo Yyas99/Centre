@@ -1,5 +1,6 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "App.h"
+#import "Taskbar.h"
 #import <dlfcn.h>
 
 typedef void (*MRGetInfoFn)(dispatch_queue_t, void (^)(CFDictionaryRef));
@@ -183,7 +184,7 @@ static NSString *const kYTMRecentKickJS = @"(()=>{const v=document.querySelector
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refreshNowPlaying) name:n object:nil];
 }
 - (void)refreshNowPlaying {
-    if ([self ytmMode]) { if (self.panel.visible) [self refreshYTM]; return; }
+    if ([self ytmMode]) { if (self.panel.visible || [self.taskbar wantsMedia]) [self refreshYTM]; return; }   // YouTube Music has no system now-playing: ask the page
     loadMediaRemote();
     if (!MRGetInfo) return;
     __weak CApp *ws = self;
@@ -212,13 +213,52 @@ static NSString *const kYTMRecentKickJS = @"(()=>{const v=document.querySelector
         if (had != ws.hasNow && ws.panel.visible && ws.field.stringValue.length == 0) [ws reloadTable];
     });
 }
+// The artwork's character colour: its average, lifted so it reads on obsidian glass, kept calm (not neon).
+static NSColor *artAccent(NSImage *img) {
+    static __weak NSImage *last; static NSColor *cached;
+    if (!img) return nil;
+    if (img == last) return cached;
+    CGImageRef ci = [img CGImageForProposedRect:NULL context:nil hints:nil]; if (!ci) return nil;
+    uint8_t px[4] = {0};
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef cx = CGBitmapContextCreate(px, 1, 1, 8, 4, cs, kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(cs); if (!cx) return nil;
+    CGContextSetInterpolationQuality(cx, kCGInterpolationMedium);
+    CGContextDrawImage(cx, CGRectMake(0, 0, 1, 1), ci); CGContextRelease(cx);
+    NSColor *avg = [NSColor colorWithSRGBRed:px[0] / 255.0 green:px[1] / 255.0 blue:px[2] / 255.0 alpha:1];
+    CGFloat h, s, b, a; [[avg colorUsingColorSpace:[NSColorSpace sRGBColorSpace]] getHue:&h saturation:&s brightness:&b alpha:&a];
+    NSColor *c = s < 0.12 ? nil : [NSColor colorWithHue:h saturation:MIN(MAX(s, 0.35), 0.6) brightness:MAX(b, 0.88) alpha:1];   // grey art: keep the ice
+    last = img; cached = c;
+    return c;
+}
+// The × hides the player for now; it comes back the moment something starts playing again (play after a pause,
+// or a new track), so it never has to be switched back on.
+- (void)dismissMedia {
+    self.mediaDismissed = YES; self.mediaSeenPlaying = self.isPlaying; self.mediaSeenTitle = self.nowTitle;
+    if (self.panel.visible) { if (self.gridMode) [self refresh]; else [self layoutForRows:self.items.count]; }
+}
+- (void)noteMediaTransitions {
+    BOOL started = self.isPlaying && !self.mediaSeenPlaying;
+    BOOL newTrack = self.nowTitle.length && ![self.nowTitle isEqualToString:self.mediaSeenTitle ?: @""];
+    self.mediaSeenPlaying = self.isPlaying; self.mediaSeenTitle = self.nowTitle;
+    if (self.mediaDismissed && (started || newTrack)) {
+        self.mediaDismissed = NO;
+        if (self.panel.visible && !self.field.stringValue.length) { NSInteger keep = self.selected; [self refresh]; if (self.gridMode && keep < (NSInteger)self.items.count) [self homeSelect:keep]; }
+    }
+}
 - (void)updateMediaView {
-    CMediaView *m = self.media; if (!m) return;
+    [self noteMediaTransitions];
+    [self fillMediaView:self.media];
+    [self fillMediaView:[self.taskbar mediaPopoverView]];      // the taskbar's player, when open
+}
+- (void)fillMediaView:(CMediaView *)m {
+    if (!m) return;
     m.titleL.stringValue = self.nowTitle ?: @"";
     NSString *sub = self.nowArtist ?: @"";
     if (self.nowApp.length) sub = sub.length ? [NSString stringWithFormat:@"%@  ·  %@", sub, self.nowApp] : self.nowApp;
     m.subL.stringValue = sub;
     m.art.image = self.nowArt ?: (self.nowAppIcon ?: [NSApp applicationIconImage]);
+    m.accent = artAccent(self.nowArt);                                     // the card takes the colour of what's playing
     [m setPlaying:self.isPlaying];
     [m setElapsed:[self currentElapsed] duration:self.nowDuration];
     [m setNeedsDisplay:YES];

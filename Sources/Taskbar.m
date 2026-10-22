@@ -5,6 +5,7 @@
 #import "Taskbar.h"
 #import "App.h"
 #import "Settings.h"
+#import "Views.h"
 #import <CoreAudio/CoreAudio.h>
 #import <AudioToolbox/AudioToolbox.h>
 #import <IOKit/ps/IOPowerSources.h>
@@ -51,7 +52,7 @@ static void writeVolume(float v) {
 
 #pragma mark - Model
 
-typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBPrev, CTBPlay, CTBNext, CTBVolume, CTBWifi, CTBBattery, CTBClock, CTBDesktop };
+typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBPrev, CTBPlay, CTBNext, CTBStatus, CTBVolume, CTBWifi, CTBBattery, CTBClock, CTBDesktop };
 
 @interface CTBItem : NSObject
 @property (nonatomic) CTBKind kind;
@@ -62,6 +63,8 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBPrev, CTBP
 @property (nonatomic) BOOL sampleRunning, sampleActive;   // README screenshots: running state without real apps
 @property (nonatomic, strong) id win;                    // one window of the app (AXUIElementRef) when windows aren't grouped
 @property (nonatomic) BOOL minimized;
+@property (nonatomic) NSInteger winCount;               // windows behind a grouped button
+@property (nonatomic, strong) NSDictionary *mirror;      // CTBStatus: a menu bar icon {wid, pid, owner, rect, img, mono}
 @end
 @implementation CTBItem @end
 
@@ -85,9 +88,12 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBPrev, CTBP
 @property (nonatomic) CFTimeInterval marqueeStart;
 @property (nonatomic, strong) NSTimer *marqueeTimer;
 @property (nonatomic) CGFloat marqueeShown;
+@property (nonatomic, strong) NSArray<NSDictionary *> *menuBarItems;   // the menu bar's icons, left to right
+@property (nonatomic) BOOL scanningMenuBar, askedCapture;
 @property (nonatomic, strong) NSRunningApplication *peekFront;           // the app in front before "show desktop"
 @property (nonatomic, strong) NSArray<NSRunningApplication *> *peeked;   // apps hidden by "show desktop", restored on the next click
-@property (nonatomic, strong) NSPopover *calendar;
+@property (nonatomic, strong) NSPopover *calendar, *player;
+@property (nonatomic, strong) CMediaView *playerView;
 @property (nonatomic) BOOL built;
 @property (nonatomic, copy) NSString *appliedDock;      // Dock mode last applied this session
 @property (nonatomic, strong) NSMutableArray *pendingFit;   // windows resized or created, checked once they settle
@@ -108,6 +114,7 @@ typedef NS_ENUM(NSInteger, CTBKind) { CTBStart, CTBTask, CTBMedia, CTBPrev, CTBP
 - (void)movePinned:(NSString *)path toIndex:(NSInteger)idx;
 - (BOOL)isActive:(CTBItem *)it;
 - (CGFloat)marqueeOffset;
+- (void)mediaTick;
 - (NSImage *)iconForPath:(NSString *)p;
 - (BOOL)wants:(NSString *)key fallback:(BOOL)def;
 - (void)windowsChanged;
@@ -125,8 +132,8 @@ static CGRect axFrame(AXUIElementRef w);
 - (NSView *)hitTest:(NSPoint)p { return nil; }
 - (void)drawRect:(NSRect)r {
     BOOL dark = cIsDark(self);
-    NSColor *tint = dark ? [NSColor colorWithSRGBRed:0.085 green:0.090 blue:0.105 alpha:0.74] : [NSColor colorWithSRGBRed:0.975 green:0.977 blue:0.985 alpha:0.80];
-    NSColor *edge = dark ? [NSColor colorWithWhite:1 alpha:0.11] : [NSColor colorWithWhite:0 alpha:0.10];
+    NSColor *tint = dark ? cObsidian() : [NSColor colorWithSRGBRed:0.975 green:0.977 blue:0.985 alpha:0.80];
+    NSColor *edge = dark ? [NSColor colorWithWhite:1 alpha:0.085] : [NSColor colorWithWhite:0 alpha:0.10];
     if (gBarRadius <= 0) {                                       // edge-to-edge: one hairline on the side facing the screen
         [tint setFill]; NSRectFill(self.bounds);
         [edge setFill]; NSRectFillUsingOperation(NSMakeRect(0, gTop ? 0 : self.bounds.size.height - 1, self.bounds.size.width, 1), NSCompositingOperationSourceOver);
@@ -137,7 +144,7 @@ static CGRect axFrame(AXUIElementRef w);
     [tint setFill]; [p fill];
     p.lineWidth = 1; [edge setStroke]; [p stroke];
     if (dark) {
-        NSColor *clear = [NSColor colorWithWhite:1 alpha:0], *lit = [NSColor colorWithWhite:1 alpha:0.13];
+        NSColor *clear = [NSColor colorWithWhite:1 alpha:0], *lit = [NSColor colorWithWhite:1 alpha:0.17];
         NSGradient *g = [[NSGradient alloc] initWithColorsAndLocations:clear, 0.0, lit, 0.25, lit, 0.75, clear, 1.0, nil];
         [g drawInRect:NSMakeRect(gBarRadius, self.bounds.size.height - 1.5, self.bounds.size.width - gBarRadius * 2, 1) angle:0];
     }
@@ -190,7 +197,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
         BOOL hover = (NSInteger)i == self.hover, press = (NSInteger)i == self.press;
         BOOL active = it.kind == CTBTask && [o isActive:it];
         // Hover / active plate
-        if (hover || active || press) {
+        if ((hover || active || press) && !(it.kind >= CTBMedia && it.kind <= CTBNext)) {
             NSRect plate = NSInsetRect(r, 2, 5);
             NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:plate xRadius:9 yRadius:9];
             NSColor *fill = active ? cSelFill(self) : [[NSColor labelColor] colorWithAlphaComponent:press ? 0.13 : 0.075];
@@ -218,6 +225,16 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
                 BOOL hidden = it.app.hidden || it.minimized;
                 CGFloat alpha = (it.app && hidden) ? 0.5 : (self.dragging && press ? 0.75 : 1);
                 [ic drawInRect:ir fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:alpha];
+                if (it.winCount > 1) {                            // 4: grouped app with several windows
+                    NSString *n = it.winCount > 9 ? @"9+" : [NSString stringWithFormat:@"%ld", (long)it.winCount];
+                    NSDictionary *ba = @{NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: ink};
+                    NSSize ns = [n sizeWithAttributes:ba];
+                    NSRect b = NSMakeRect(NSMaxX(ir) - ns.width / 2 - 4, NSMaxY(ir) - 9, MAX(13, ns.width + 7), 13);
+                    NSBezierPath *bp = [NSBezierPath bezierPathWithRoundedRect:b xRadius:6.5 yRadius:6.5];
+                    [(dark ? [NSColor colorWithWhite:0.17 alpha:1] : [NSColor colorWithWhite:0.96 alpha:1]) setFill]; [bp fill];
+                    [[[NSColor labelColor] colorWithAlphaComponent:0.22] setStroke]; bp.lineWidth = 0.75; [bp stroke];
+                    [n drawAtPoint:NSMakePoint(NSMidX(b) - ns.width / 2, NSMidY(b) - ns.height / 2) withAttributes:ba];
+                }
                 if (named) {
                     NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.lineBreakMode = NSLineBreakByTruncatingTail;
                     NSDictionary *na = @{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:active ? NSFontWeightSemibold : NSFontWeightRegular],
@@ -234,20 +251,28 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
                 break;
             }
             case CTBMedia: {
-                NSRect art = NSMakeRect(NSMinX(r) + 8, NSMidY(r) - 13, 26, 26);
+                // 1: one soft pill holds the player (art, title, controls); 2: a playback line along its bottom.
+                NSRect pill = r;
+                for (CTBItem *x in items) if (x.kind >= CTBPrev && x.kind <= CTBNext && !NSIsEmptyRect(x.rect)) pill = NSUnionRect(pill, x.rect);
+                pill = NSInsetRect(pill, 0, 5);
+                [[[NSColor labelColor] colorWithAlphaComponent:0.055] setFill];
+                [[NSBezierPath bezierPathWithRoundedRect:pill xRadius:10 yRadius:10] fill];
+                double dur = o.app.nowDuration, el = [o.app currentElapsed];
+                if (dur > 1) {
+                    NSRect track = NSMakeRect(NSMinX(r) + 44, gTop ? NSMaxY(pill) - 4 : NSMinY(pill) + 2, NSMaxX(pill) - 10 - (NSMinX(r) + 44), 2);
+                    [[[NSColor labelColor] colorWithAlphaComponent:0.12] setFill]; [[NSBezierPath bezierPathWithRoundedRect:track xRadius:1 yRadius:1] fill];
+                    NSRect done = track; done.size.width = MAX(2, track.size.width * MIN(MAX(el / dur, 0), 1));
+                    [cAccent() setFill]; [[NSBezierPath bezierPathWithRoundedRect:done xRadius:1 yRadius:1] fill];
+                }
+                NSRect art = NSMakeRect(NSMinX(r) + 6, NSMidY(r) - 15, 30, 30);   // 5: art matches the app icons
                 NSImage *img = o.app.nowArt;
                 if (img) {
                     [NSGraphicsContext saveGraphicsState];
-                    [[NSBezierPath bezierPathWithRoundedRect:art xRadius:6 yRadius:6] addClip];
+                    [[NSBezierPath bezierPathWithRoundedRect:art xRadius:7 yRadius:7] addClip];
                     [img drawInRect:art fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
                     [NSGraphicsContext restoreGraphicsState];
                 } else {
                     [tileImage(@"music.note", @"Media") drawInRect:art fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
-                }
-                if (hover) {                                      // hovering the art shows what a click will do
-                    [[NSColor colorWithWhite:0 alpha:0.45] setFill];
-                    [[NSBezierPath bezierPathWithRoundedRect:art xRadius:6 yRadius:6] fill];
-                    drawSymbol(o.app.isPlaying ? @"pause.fill" : @"play.fill", 11, [NSColor whiteColor], NSMakePoint(NSMidX(art), NSMidY(art)));
                 }
                 CGFloat tx = NSMaxX(art) + 8, tw = NSMaxX(r) - tx - 8;
                 NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.lineBreakMode = NSLineBreakByTruncatingTail;
@@ -279,7 +304,12 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
             }
             case CTBPrev: case CTBPlay: case CTBNext: {
                 NSString *sym = it.kind == CTBPrev ? @"backward.fill" : it.kind == CTBNext ? @"forward.fill" : o.app.isPlaying ? @"pause.fill" : @"play.fill";
-                drawSymbol(sym, it.kind == CTBPlay ? 13 : 11, ink, NSMakePoint(NSMidX(r), NSMidY(r)));
+                NSPoint c = NSMakePoint(NSMidX(r), NSMidY(r));
+                if (it.kind == CTBPlay) {                         // 3: play/pause leads, in a small disc; skip buttons step back
+                    [[[NSColor labelColor] colorWithAlphaComponent:hover ? 0.22 : 0.14] setFill];
+                    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(c.x - 12, c.y - 12, 24, 24)] fill];
+                    drawSymbol(sym, 11, ink, NSMakePoint(c.x + (o.app.isPlaying ? 0 : 1), c.y));
+                } else drawSymbol(sym, 10, [ink colorWithAlphaComponent:hover ? 0.9 : 0.6], c);
                 break;
             }
             case CTBVolume: {
@@ -314,6 +344,16 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
                 BOOL date = o.dateText.length > 0;
                 [o.clockText drawInRect:NSMakeRect(NSMinX(r), date ? NSMidY(r) - 1 : NSMidY(r) - 9, r.size.width, 18) withAttributes:ta];
                 if (date) [o.dateText drawInRect:NSMakeRect(NSMinX(r), NSMidY(r) - 15, r.size.width, 14) withAttributes:da];
+                break;
+            }
+            case CTBStatus: {
+                NSImage *img = it.mirror[@"img"]; if (!img) break;
+                NSSize s = img.size; NSRect ir = NSMakeRect(round(NSMidX(r) - s.width / 2), round(NSMidY(r) - s.height / 2), s.width, s.height);
+                if ([it.mirror[@"mono"] boolValue]) {            // one-colour icons follow the bar's ink, so they read in light and dark
+                    NSImage *tinted = [NSImage imageWithSize:s flipped:NO drawingHandler:^BOOL(NSRect rr) {
+                        [img drawInRect:rr]; [ink set]; NSRectFillUsingOperation(rr, NSCompositingOperationSourceAtop); return YES; }];
+                    [tinted drawInRect:ir];
+                } else [img drawInRect:ir];
                 break;
             }
             case CTBDesktop: {
@@ -389,6 +429,9 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
     if ((self = [super init])) {
         _app = app; _icons = [NSMutableDictionary new]; _items = @[];
         _observers = [NSMutableDictionary new]; _winOrder = [NSMutableDictionary new];
+        // An older "show desktop" hid Finder, which hides your desktop icons; make sure they're back.
+        NSRunningApplication *finder = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.finder"].firstObject;
+        if (finder.hidden && !app.snapshotDir) [finder unhide];
         _lastFront = [NSWorkspace sharedWorkspace].frontmostApplication.processIdentifier;
     }
     return self;
@@ -518,7 +561,7 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
     [self rebuild];
     if (!self.tick) {
         __weak CTaskbar *ws = self;
-        self.tick = [NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) { [ws refreshStatus:NO]; [ws checkFullScreen]; }];   // also catches borderless games
+        self.tick = [NSTimer timerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) { [ws refreshStatus:NO]; [ws checkFullScreen]; [ws mediaTick]; }];   // also catches borderless games
         [[NSRunLoop mainRunLoop] addTimer:self.tick forMode:NSRunLoopCommonModes];
     }
     BOOL autoHide = [self wants:@"taskbarAutoHide" fallback:NO];
@@ -541,6 +584,105 @@ static void drawSymbol(NSString *name, CGFloat pt, NSColor *c, NSPoint center) {
         self.sweptFrame = [self barFrame];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self sweepWindows]; });
     } else if (![self fitsWindows]) self.sweptFrame = NSZeroRect;
+}
+
+#pragma mark Menu bar mirror
+
+// Copies of the menu bar's icons (Control Centre, Wi-Fi, other apps' extras) in the tray. macOS lets no app host another
+// app's menu bar item, so — like Bartender and Ice — Centre shows a picture of each (needs Screen Recording) and, when you
+// click one, clicks the real item at the top of the screen, so its menu or panel opens as usual.
+typedef CGImageRef (*CreateWindowImageFn)(CGRect, CGWindowListOption, CGWindowID, CGWindowImageOption);
+static CreateWindowImageFn windowImageFn(void) {           // deprecated API: looked up at run time so newer SDKs still build
+    static CreateWindowImageFn fn; static dispatch_once_t once;
+    dispatch_once(&once, ^{ fn = (CreateWindowImageFn)dlsym(RTLD_DEFAULT, "CGWindowListCreateImage"); });
+    return fn;
+}
+// True when every visible pixel is (near) the same grey: a template-style icon that can be re-tinted.
+static BOOL monochrome(CGImageRef ci) {
+    size_t w = CGImageGetWidth(ci), h = CGImageGetHeight(ci); if (!w || !h || w > 800 || h > 200) return NO;
+    uint8_t *px = calloc(w * h * 4, 1); if (!px) return NO;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef cx = CGBitmapContextCreate(px, w, h, 8, w * 4, cs, kCGImageAlphaPremultipliedLast);
+    CGColorSpaceRelease(cs);
+    if (!cx) { free(px); return NO; }
+    CGContextDrawImage(cx, CGRectMake(0, 0, w, h), ci); CGContextRelease(cx);
+    BOOL mono = YES; int lo = 255, hi = 0; size_t seen = 0;
+    for (size_t i = 0; i < w * h && mono; i++) {
+        uint8_t *p = px + i * 4; if (p[3] < 96) continue;
+        int r = p[0] * 255 / p[3], g = p[1] * 255 / p[3], b = p[2] * 255 / p[3];
+        if (MAX(r, MAX(g, b)) - MIN(r, MIN(g, b)) > 40) mono = NO;   // coloured
+        int l = (r + g + b) / 3; lo = MIN(lo, l); hi = MAX(hi, l); seen++;
+    }
+    free(px);
+    return mono && seen > 0 && hi - lo < 110;
+}
+- (void)scanMenuBar {
+    if (self.scanningMenuBar || ![self wants:@"taskbarMenuBar" fallback:NO] || !self.tick || self.fullScreenAway) {
+        if (![self wants:@"taskbarMenuBar" fallback:NO] && self.menuBarItems.count) { self.menuBarItems = nil; [self rebuild]; }
+        return;
+    }
+    BOOL allowed = CGPreflightScreenCaptureAccess();
+    if (!allowed) {
+        if (!self.askedCapture) { self.askedCapture = YES; CGRequestScreenCaptureAccess(); }   // asks once; then System Settings › Privacy
+        return;
+    }
+    self.scanningMenuBar = YES;
+    pid_t me = getpid();
+    CGRect main = CGDisplayBounds(CGMainDisplayID());
+    __weak CTaskbar *ws = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSArray *list = CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID));
+        NSInteger level = CGWindowLevelForKey(kCGStatusWindowLevelKey);
+        CreateWindowImageFn snap = windowImageFn();
+        NSMutableArray *out = [NSMutableArray new];
+        for (NSDictionary *d in list) {
+            if ([d[(id)kCGWindowLayer] integerValue] != level || [d[(id)kCGWindowOwnerPID] intValue] == me) continue;
+            CGRect b; if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)d[(id)kCGWindowBounds], &b)) continue;
+            if (b.origin.y > main.origin.y + 2 || b.size.height > 40 || b.size.width < 4 || b.size.width > 400) continue;   // the main display's menu bar only
+            if (CGRectGetMidX(b) < CGRectGetMinX(main) || CGRectGetMidX(b) > CGRectGetMaxX(main)) continue;
+            CGWindowID wid = [d[(id)kCGWindowNumber] unsignedIntValue];
+            CGImageRef ci = snap ? snap(CGRectNull, kCGWindowListOptionIncludingWindow, wid, kCGWindowImageBoundsIgnoreFraming | kCGWindowImageBestResolution) : NULL;
+            if (!ci) continue;
+            BOOL mono = monochrome(ci);
+            NSImage *img = [[NSImage alloc] initWithCGImage:ci size:NSMakeSize(b.size.width, b.size.height)];
+            CGImageRelease(ci);
+            [out addObject:@{@"wid": @(wid), @"pid": d[(id)kCGWindowOwnerPID] ?: @0, @"owner": d[(id)kCGWindowOwnerName] ?: @"Menu bar item",
+                             @"rect": [NSValue valueWithRect:NSRectFromCGRect(b)], @"img": img, @"mono": @(mono)}];
+        }
+        [out sortUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [@([a[@"rect"] rectValue].origin.x) compare:@([b[@"rect"] rectValue].origin.x)]; }];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            CTaskbar *s = ws; if (!s) return;
+            s.scanningMenuBar = NO;
+            BOOL same = s.menuBarItems.count == out.count;
+            for (NSUInteger i = 0; same && i < out.count; i++)
+                same = [s.menuBarItems[i][@"wid"] isEqual:out[i][@"wid"]] && fabs([s.menuBarItems[i][@"img"] size].width - [out[i][@"img"] size].width) < 0.5;
+            s.menuBarItems = out;
+            if (!same) [s rebuild];                                                              // icons came, went or changed width
+            else {                                                                               // same icons: just fresh pictures
+                NSUInteger i = 0;
+                for (CTBItem *it in s.items) if (it.kind == CTBStatus && i < out.count) { it.mirror = out[i++]; [s.barView setNeedsDisplayInRect:it.rect]; }
+            }
+        });
+    });
+}
+// Click (or right-click) the real menu bar item, then put the pointer back where it was.
+- (void)pressMenuBarItem:(NSDictionary *)m right:(BOOL)right {
+    if (!m) return;
+    CGRect b = NSRectToCGRect([m[@"rect"] rectValue]);
+    CGPoint p = CGPointMake(CGRectGetMidX(b), CGRectGetMidY(b));
+    CGEventRef now = CGEventCreate(NULL); CGPoint back = CGEventGetLocation(now); CFRelease(now);
+    CGMouseButton btn = right ? kCGMouseButtonRight : kCGMouseButtonLeft;
+    CGEventRef dn = CGEventCreateMouseEvent(NULL, right ? kCGEventRightMouseDown : kCGEventLeftMouseDown, p, btn);
+    CGEventRef up = CGEventCreateMouseEvent(NULL, right ? kCGEventRightMouseUp : kCGEventLeftMouseUp, p, btn);
+    CGEventPost(kCGHIDEventTap, dn);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        CGEventPost(kCGHIDEventTap, up); CFRelease(up);
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            CGWarpMouseCursorPosition(back); CGAssociateMouseAndMouseCursorPosition(true);
+        });
+    });
+    CFRelease(dn);
 }
 
 #pragma mark Full screen
@@ -604,6 +746,7 @@ static BOOL displayInFullScreenSpace(CGDirectDisplayID did) {
         self.fullScreenAway = YES;
         [self.hideTimer invalidate]; self.hideTimer = nil;
         if (self.calendar.shown) [self.calendar close];
+        if (self.player.shown) [self.player close];
         [self.tip orderOut:nil];
         [self.bar orderOut:nil];
     } else [self apply];                                          // back exactly as Settings has it, auto-hide included
@@ -616,7 +759,7 @@ static id dockValue(NSString *key) {
     return CFBridgingRelease(CFPreferencesCopyAppValue((__bridge CFStringRef)key, CFSTR("com.apple.dock")));
 }
 // The Dock settings Centre may change, and so saves first and puts back exactly (NSNull: you never set it).
-static NSArray<NSString *> *dockKeys(void) { return @[@"autohide", @"autohide-delay", @"tilesize", @"magnification", @"orientation", @"mineffect"]; }
+static NSArray<NSString *> *dockKeys(void) { return @[@"autohide", @"autohide-delay", @"tilesize", @"magnification", @"orientation", @"mineffect", @"minimize-to-application"]; }
 static BOOL sameDockValue(id a, id b) {
     BOOL na = !a || a == [NSNull null], nb = !b || b == [NSNull null];
     if (na || nb) return na && nb;
@@ -627,7 +770,7 @@ static NSString *dockWrite(NSString *key, id v) {
     if (!v || v == [NSNull null]) return [NSString stringWithFormat:@"defaults delete com.apple.dock %@ 2>/dev/null", key];
     if ([key isEqualToString:@"orientation"] || [key isEqualToString:@"mineffect"])
         return [NSString stringWithFormat:@"defaults write com.apple.dock %@ -string %@", key, shellQuote([v description])];
-    if ([key isEqualToString:@"autohide"] || [key isEqualToString:@"magnification"])
+    if ([key isEqualToString:@"autohide"] || [key isEqualToString:@"magnification"] || [key isEqualToString:@"minimize-to-application"])
         return [NSString stringWithFormat:@"defaults write com.apple.dock %@ -bool %@", key, [v boolValue] ? @"true" : @"false"];
     return [NSString stringWithFormat:@"defaults write com.apple.dock %@ -float %g", key, [v doubleValue]];
 }
@@ -656,10 +799,10 @@ static NSString *dockWrite(NSString *key, id v) {
     NSString *mode = barOn ? [self dockMode] : @"keep";
     // Quick minimise: macOS has no instant minimise (the window server draws it), so use its quickest effect, Scale.
     BOOL quick = barOn && [self wants:@"taskbarQuickMinimise" fallback:YES];
-    NSString *key = quick ? [mode stringByAppendingString:@"+scale"] : mode;
+    NSString *key = [mode stringByAppendingString:quick ? @"+scale+app" : @"+app"];
     if ([key isEqualToString:self.appliedDock]) return;               // apply runs on every config write; touch the Dock only on a real change
     self.appliedDock = key;
-    BOOL keep = [mode isEqualToString:@"keep"] && !quick;              // nothing of yours is changed: put it all back
+    BOOL keep = !barOn;                                                // bar off: put all of yours back
     NSDictionary *orig = [self dockOriginal:!keep];
     if (!orig) return;                                                 // never changed: nothing to put back
     NSMutableDictionary *want = [orig mutableCopy];
@@ -667,6 +810,9 @@ static NSString *dockWrite(NSString *key, id v) {
     if ([mode isEqualToString:@"autohide"]) want[@"autohide"] = @YES;
     else if ([mode isEqualToString:@"off"]) { want[@"autohide"] = @YES; want[@"autohide-delay"] = @1000; }   // never comes back up
     if (quick) want[@"mineffect"] = @"scale";
+    // Minimised windows go into their app's icon, not a thumbnail tile of their own: with the Dock hidden those tiles
+    // linger at the bottom of the screen. The taskbar already shows each minimised window.
+    if (barOn) want[@"minimize-to-application"] = @YES;
     NSMutableArray *cmds = [NSMutableArray new];
     for (NSString *k in dockKeys()) if (!sameDockValue(dockValue(k), want[k])) [cmds addObject:dockWrite(k, want[k])];
     if (keep) { NSMutableDictionary *c = [self.app mutableConfig]; [c removeObjectForKey:@"dockOriginal"]; [self.app writeConfig:c]; }
@@ -724,6 +870,7 @@ static NSString *dockWrite(NSString *key, id v) {
         NSArray *wins = (perWindow && r) ? [self ordered:lists[@(r.processIdentifier)] pid:r.processIdentifier] : @[];
         if (!wins.count) {
             CTBItem *t = [CTBItem new]; t.kind = CTBTask; t.path = path; t.app = r; t.pinned = pinned; t.title = name ?: @"App";
+            if (r && !perWindow) t.winCount = (NSInteger)[lists[@(r.processIdentifier)] count];
             [items addObject:t];
             return;
         }
@@ -752,8 +899,14 @@ static NSString *dockWrite(NSString *key, id v) {
         if (AXUIElementCopyAttributeValue(ae, kAXFocusedWindowAttribute, &fw) == kAXErrorSuccess && fw) self.focusedWin = CFBridgingRelease(fw);
         CFRelease(ae);
     }
-    NSArray *tray = @[@(CTBMedia), @(CTBPrev), @(CTBPlay), @(CTBNext), @(CTBVolume), @(CTBWifi), @(CTBBattery), @(CTBClock), @(CTBDesktop)];
-    for (NSNumber *k in tray) { CTBItem *t = [CTBItem new]; t.kind = k.integerValue; [items addObject:t]; }
+    NSArray *tray = @[@(CTBMedia), @(CTBPrev), @(CTBPlay), @(CTBNext), @(CTBStatus), @(CTBVolume), @(CTBWifi), @(CTBBattery), @(CTBClock), @(CTBDesktop)];
+    for (NSNumber *k in tray) {
+        if (k.integerValue == CTBStatus) {                       // one button per menu bar icon
+            if ([self wants:@"taskbarMenuBar" fallback:NO]) for (NSDictionary *m in self.menuBarItems) { CTBItem *t = [CTBItem new]; t.kind = CTBStatus; t.mirror = m; [items addObject:t]; }
+            continue;
+        }
+        CTBItem *t = [CTBItem new]; t.kind = k.integerValue; [items addObject:t];
+    }
     self.items = items;
     [self layoutItems];
     CTBView *bv = (CTBView *)self.barView;
@@ -801,6 +954,11 @@ static double glideTime(double d, double v) { return MAX(d / v + 0.5, 1.0); }
     }];
     [[NSRunLoop mainRunLoop] addTimer:self.marqueeTimer forMode:NSRunLoopCommonModes];
 }
+- (void)mediaTick {
+    if (self.ticks % 2 == 0) [self scanMenuBar];
+    if (self.player.shown) [self.app updateMediaView];                                   // elapsed time ticks along
+    if ([self.app ytmMode] && [self wantsMedia] && self.ticks % 3 == 0) [self.app refreshNowPlaying];   // the page has no push updates
+}
 - (BOOL)showsMedia { return [self wants:@"taskbarMedia" fallback:YES] && self.app.hasNow && self.app.nowTitle.length; }
 
 - (void)layoutItems {
@@ -821,9 +979,10 @@ static double glideTime(double d, double v) { return MAX(d / v + 0.5, 1.0); }
             case CTBWifi: w = [self wants:@"taskbarWifi" fallback:YES] ? 32 : 0; break;
             case CTBVolume: w = [self wants:@"taskbarVolume" fallback:YES] ? 32 : 0; break;
             case CTBMedia: if ([self showsMedia] && ![self wants:@"taskbarMediaControls" fallback:YES]) x -= 10;
-                w = [self showsMedia] ? MIN(230, MAX(120, ceil([self.app.nowTitle sizeWithAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + 58)) : 0; break;
+                w = [self showsMedia] ? MIN(230, MAX(120, ceil([self.app.nowTitle sizeWithAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightMedium]}].width) + 62)) : 0; break;
+            case CTBStatus: { NSImage *img = it.mirror[@"img"]; w = img ? ceil(img.size.width) + 10 : 0; break; }
             case CTBPrev: case CTBPlay: case CTBNext:                       // ⏮ ⏯ ⏭ beside the title
-                w = [self showsMedia] && [self wants:@"taskbarMediaControls" fallback:YES] ? 28 : 0;
+                w = [self showsMedia] && [self wants:@"taskbarMediaControls" fallback:YES] ? (it.kind == CTBPlay ? 30 : 24) : 0;
                 if (w && it.kind == CTBNext) x -= 10;
                 break;
             default: break;
@@ -1156,7 +1315,7 @@ static void raiseWindow(id win, NSRunningApplication *r) {
             sendAppEvent(r, kAEReopenApplication);
             break;
         }
-        case CTBMedia: [self.app mediaCommand:2]; break;
+        case CTBMedia: [self showPlayer:it]; break;
         case CTBPrev: [self.app mediaCommand:5]; break;
         case CTBPlay: [self.app mediaCommand:2]; break;
         case CTBNext: [self.app mediaCommand:4]; break;
@@ -1165,6 +1324,7 @@ static void raiseWindow(id win, NSRunningApplication *r) {
         case CTBBattery: openURLString(@"x-apple.systempreferences:com.apple.Battery-Settings.extension"); break;
         case CTBClock: [self showCalendar:it]; break;
         case CTBDesktop: [self peekDesktop]; break;
+        case CTBStatus: [self pressMenuBarItem:it.mirror right:NO]; break;
     }
 }
 - (void)launch:(NSString *)path {
@@ -1185,12 +1345,13 @@ static void raiseWindow(id win, NSRunningApplication *r) {
     } else {
         NSRunningApplication *front = [NSWorkspace sharedWorkspace].frontmostApplication;
         self.peekFront = (front && front != NSRunningApplication.currentApplication) ? front : [NSRunningApplication runningApplicationWithProcessIdentifier:self.lastFront];
-        // Centre takes the front (it has no windows), so every app — Finder's windows too — can be hidden;
-        // the active app can't always be hidden while it's in front, which is what left windows behind before.
+        // Centre takes the front (it has no windows), so every other app can be hidden — the active app can't always be
+        // hidden while it's in front, which is what left windows behind before.
         [NSApp activateIgnoringOtherApps:YES];
         NSMutableArray *hid = [NSMutableArray new];
         for (NSRunningApplication *r in [NSWorkspace sharedWorkspace].runningApplications)
-            if (r.activationPolicy == NSApplicationActivationPolicyRegular && !r.hidden && r != NSRunningApplication.currentApplication)
+            if (r.activationPolicy == NSApplicationActivationPolicyRegular && !r.hidden && r != NSRunningApplication.currentApplication
+                && ![r.bundleIdentifier isEqualToString:@"com.apple.finder"])   // hiding Finder takes your desktop icons with it
                 if ([r hide]) [hid addObject:r];
         self.peeked = hid;
     }
@@ -1209,6 +1370,29 @@ static void raiseWindow(id win, NSRunningApplication *r) {
 
 #pragma mark Calendar
 
+// Centre's own media widget (artwork, title, scrubbable progress, controls) in a popover above the bar.
+// Works with whatever macOS reports as playing, and with YouTube Music when Centre is set to it (Settings › Home).
+- (CMediaView *)mediaPopoverView { return self.player.shown ? self.playerView : nil; }
+- (BOOL)wantsMedia { return self.tick && [self wants:@"taskbarMedia" fallback:YES]; }
+- (void)showPlayer:(CTBItem *)it {
+    if (self.player.shown) { [self.player close]; return; }
+    if (!self.playerView) {
+        CMediaView *mv = [[CMediaView alloc] initWithFrame:NSMakeRect(0, 0, 400, kMediaH)];
+        __weak CApp *wa = self.app;
+        mv.onCommand = ^(int cmd) { [wa mediaCommand:cmd]; };
+        mv.onSeek = ^(double f) { [wa mediaSeek:f]; };
+        self.playerView = mv;
+    }
+    self.playerView.hidden = NO;
+    NSViewController *vc = [NSViewController new]; vc.view = self.playerView;
+    NSPopover *pop = [NSPopover new]; pop.contentViewController = vc; pop.behavior = NSPopoverBehaviorTransient; pop.animates = YES; pop.delegate = self;
+    pop.contentSize = NSMakeSize(400, kMediaH);
+    self.player = pop;
+    [NSApp activateIgnoringOtherApps:YES];                     // a transient popover closes on an outside click only if Centre is active
+    [pop showRelativeToRect:it.rect ofView:self.barView preferredEdge:gTop ? NSRectEdgeMinY : NSRectEdgeMaxY];
+    [self.app refreshNowPlaying];
+    [self.app updateMediaView];
+}
 - (void)showCalendar:(CTBItem *)it {
     if (self.calendar.shown) { [self.calendar close]; return; }
     NSView *v = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 252, 250)];
@@ -1275,6 +1459,7 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
 }
 
 - (void)menuForItem:(CTBItem *)it event:(NSEvent *)e {
+    if (it.kind == CTBStatus) { [self pressMenuBarItem:it.mirror right:YES]; return; }   // its own right-click menu
     NSMenu *m = [NSMenu new]; m.autoenablesItems = NO;
     switch (it.kind) {
         case CTBStart:
@@ -1309,7 +1494,10 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
                 NSMenuItem *reveal = [self item:@"Show in Finder" action:@selector(menuReveal:) object:it.path]; [m addItem:reveal];
             } else [m addItem:[self item:@"Open" action:@selector(menuLaunch:) object:it.path]];
             [m addItem:[self item:it.pinned ? @"Unpin from Taskbar" : @"Pin to Taskbar" action:@selector(menuPin:) object:it.path]];
-            if (it.app) {
+            if (it.app && [it.app.bundleIdentifier isEqualToString:@"com.apple.finder"]) {   // Finder draws the desktop: never just quit it
+                [m addItem:[NSMenuItem separatorItem]];
+                [m addItem:[self item:@"Relaunch Finder" action:@selector(menuRelaunchFinder:) object:it.app]];
+            } else if (it.app) {
                 [m addItem:[NSMenuItem separatorItem]];
                 [m addItem:[self item:@"Quit" action:@selector(menuQuit:) object:it.app]];
                 // Force Quit: right-click with ⌥ held, or always once Quit failed. Not an ⌥-alternate item: hidden alternates
@@ -1320,6 +1508,7 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
             }
             break;
         }
+        case CTBStatus: break;
         case CTBMedia: case CTBPrev: case CTBPlay: case CTBNext:
             [m addItem:[self item:self.app.isPlaying ? @"Pause" : @"Play" action:@selector(menuMedia:) object:@2]];
             [m addItem:[self item:@"Next Track" action:@selector(menuMedia:) object:@4]];
@@ -1402,6 +1591,12 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
         showHUDFor([NSString stringWithFormat:@"%@ didn't quit · right-click it for Force Quit", r.localizedName ?: @"The app"], @"exclamationmark.triangle.fill", 4);
     });
 }
+- (void)menuRelaunchFinder:(NSMenuItem *)m {                      // what Force Quit › Relaunch does: Finder comes straight back
+    [(NSRunningApplication *)m.representedObject terminate];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self launch:@"/System/Library/CoreServices/Finder.app"];
+    });
+}
 - (void)menuForceQuit:(NSMenuItem *)m { [(NSRunningApplication *)m.representedObject forceTerminate]; }
 - (void)menuMedia:(NSMenuItem *)m { [self.app mediaCommand:[m.representedObject intValue]]; }
 - (void)menuMute:(id)s { writeMute(!self.muted); [self refreshStatus:YES]; }
@@ -1429,12 +1624,13 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
         case CTBPrev: return @"Previous track";
         case CTBPlay: return self.app.isPlaying ? @"Pause" : @"Play";
         case CTBNext: return @"Next track";
-        case CTBMedia: return [NSString stringWithFormat:@"%@  ·  click to %@", self.app.nowApp.length ? self.app.nowApp : @"Now playing", self.app.isPlaying ? @"pause" : @"play"];
+        case CTBMedia: return [NSString stringWithFormat:@"%@  ·  click for the player", self.app.nowApp.length ? self.app.nowApp : @"Now playing"];
         case CTBVolume: return self.hasVolume ? [NSString stringWithFormat:@"Volume %ld%%%@  ·  scroll to change", (long)lroundf((self.muted ? 0 : self.volume) * 100), self.muted ? @" (muted)" : @""] : @"Volume";
         case CTBWifi: return self.online ? @"Connected" : @"No network";
         case CTBBattery: return [NSString stringWithFormat:@"Battery %ld%%%@", (long)self.battery, self.charging ? @" · charging" : self.onPower ? @" · on power" : @""];
         case CTBClock: { NSDateFormatter *f = [NSDateFormatter new]; f.dateStyle = NSDateFormatterFullStyle; f.timeStyle = NSDateFormatterNoStyle; return [f stringFromDate:[NSDate date]]; }
         case CTBDesktop: return self.peeked.count ? @"Bring your windows back" : @"Show desktop";
+        case CTBStatus: return it.mirror[@"owner"];
     }
     return nil;
 }
@@ -1496,7 +1692,7 @@ static NSArray<NSDictionary *> *appWindows(NSRunningApplication *r) {
     }
     NSRect edgeStrip = gTop ? NSMakeRect(f.origin.x, NSMaxY(v), f.size.width, 1) : NSMakeRect(f.origin.x, s.frame.origin.y, f.size.width, 1);
     BOOL inside = NSPointInRect(m, NSInsetRect(NSUnionRect(f, edgeStrip), -12, -14));
-    if (inside || self.menuOpen || self.calendar.shown) { [self.hideTimer invalidate]; self.hideTimer = nil; return; }
+    if (inside || self.menuOpen || self.calendar.shown || self.player.shown) { [self.hideTimer invalidate]; self.hideTimer = nil; return; }
     if (!self.hideTimer) {
         __weak CTaskbar *ws = self;
         self.hideTimer = [NSTimer scheduledTimerWithTimeInterval:0.6 repeats:NO block:^(NSTimer *t) { ws.hideTimer = nil; [ws slide:NO]; }];

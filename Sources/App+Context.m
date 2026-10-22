@@ -28,6 +28,7 @@ static NSDictionary *browserKinds(void) {
 #pragma mark Capture (runs as Centre opens, before the panel takes focus)
 
 - (void)captureContext {
+    if (self.readmeMode) return;                                 // public screenshots set their own context
     self.selectedText = nil;
     NSRunningApplication *fr = [NSWorkspace sharedWorkspace].frontmostApplication;
     BOOL me = fr == NSRunningApplication.currentApplication;

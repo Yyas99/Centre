@@ -29,17 +29,21 @@ typedef void (^CAction)(void);
 @property (nonatomic, copy) NSString *verb;      // footer label for ↩ when the kind's default doesn't fit ("Cancel Timer")
 @property (nonatomic, copy) NSString *completion; // what Tab puts in the search field ("~/Documents/")
 @property (nonatomic) BOOL keepsPanel;              // ↩ leads somewhere inside Centre (asks for input, opens a mode)
+@property (nonatomic, strong) id dragObject;         // NSURL or NSString: the row can be dragged out into another app
+@property (nonatomic, copy) NSString *previewText;  // full text for the preview pane (clipboard, shelf)
+@property (nonatomic, copy) NSString *shelfID;      // a shelf entry
 @end
 
 CItem *mk(NSString *title, NSString *sub, NSString *kind, NSString *symbol, CAction action);
 
 #pragma mark - Layout constants
 
-static const CGFloat kRadius = 18;                                   // panel corner radius
-static const CGFloat kW = 720, kSearchH = 62, kRowH = 44, kGridH = 124, kFooterH = 40;
-static const CGFloat kCellW = 84, kCellH = 84, kGridX = 18, kQuickH = 48, kHomeRowH = 34, kHomeHeadH = 32;
+static const CGFloat kRadius = 24;                                   // panel corner radius
+static const CGFloat kW = 720, kSearchH = 62, kRowH = 44, kGridH = 124, kFooterH = 44;
+static const CGFloat kCellW = 84, kCellH = 84, kGridX = 18, kQuickH = 72, kHomeRowH = 34, kHomeHeadH = 32;
 static const CGFloat kInset = 22;                                    // one left edge for headers, icons and pills
-static const CGFloat kMediaH = 92;
+static const CGFloat kMediaH = 100;
+static const CGFloat kAmbientH = 30;
 static const NSInteger kMaxRows = 9;
 
 #pragma mark - Helpers (Util.m)
@@ -98,6 +102,9 @@ BOOL windowFillsDisplay(CGRect w, CGRect d);   // full screen, or one side of a 
 #pragma mark - Theme and HUD (Theme.m)
 
 NSColor *cAccent(void);
+NSColor *cIceFill(void);
+NSColor *cIceEdge(void);
+NSColor *cObsidian(void);
 BOOL cIsDark(NSView *v);
 NSColor *cSelFill(NSView *v);
 NSColor *cSelEdge(NSView *v);

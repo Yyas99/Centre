@@ -37,7 +37,7 @@
     [fx addSubview:si]; self.searchIcon = si;
 
     CField *t = [[CField alloc] initWithFrame:NSMakeRect(54, 0, kW - 54 - 22, 28)];
-    t.font = [NSFont systemFontOfSize:21 weight:NSFontWeightRegular];
+    t.font = [NSFont systemFontOfSize:22 weight:NSFontWeightLight];       // lighter, larger: the field reads as calm space
     t.bezeled = NO; t.bordered = NO; t.drawsBackground = NO; t.focusRingType = NSFocusRingTypeNone;
     t.placeholderAttributedString = [[NSAttributedString alloc] initWithString:@"Search apps, files and commands" attributes:@{NSFontAttributeName: t.font, NSForegroundColorAttributeName: [NSColor tertiaryLabelColor]}];
     t.delegate = self;
@@ -69,13 +69,18 @@
     hl.iconFor = ^NSImage *(CItem *i) { return [ws iconFor:i]; };
     hl.onPick = ^(NSInteger i) { ws.selected = i; [ws runSelected:NO]; };
     hl.onHover = ^(NSInteger i) { [ws hoverSelect:i]; };
+    hl.onDragOut = ^(NSInteger i) {                                  // a shelf item dragged into another app leaves the shelf
+        if (i >= 0 && i < (NSInteger)ws.items.count && ws.items[i].shelfID) [ws shelfRemove:ws.items[i].shelfID]; };
     [fx addSubview:hl]; self.homeList = hl;
 
     CMediaView *mv = [[CMediaView alloc] initWithFrame:NSMakeRect(0, 0, kW, kMediaH)];
     mv.onCommand = ^(int cmd) { [ws mediaCommand:cmd]; };
     mv.onSeek = ^(double f) { [ws mediaSeek:f]; };
+    mv.onClose = ^{ [ws dismissMedia]; };
     mv.hidden = YES;
     [fx addSubview:mv]; self.media = mv;
+    CAmbient *am = [[CAmbient alloc] initWithFrame:NSMakeRect(0, 0, kW, kAmbientH)]; am.hidden = YES;
+    [fx addSubview:am]; self.ambient = am;
 
     CFooterBar *footer = [[CFooterBar alloc] initWithFrame:NSMakeRect(0, 0, kW, kFooterH)];
     CHairline *fl = [[CHairline alloc] initWithFrame:NSMakeRect(0, kFooterH - 1, kW, 1)];
@@ -139,20 +144,25 @@
 
 - (void)layoutForRows:(NSInteger)rows {
     BOOL home = self.gridMode && rows > 0;
-    BOOL showMedia = self.hasNow && self.field.stringValue.length == 0 && ([self ytmMode] || ![self.config[@"showMediaPlayer"] isEqual:@NO]);
+    BOOL showMedia = self.hasNow && self.nowTitle.length && !self.mediaDismissed && self.field.stringValue.length == 0 && ([self ytmMode] || ![self.config[@"showMediaPlayer"] isEqual:@NO]);
     CGFloat mediaH = showMedia ? kMediaH : 0;
+    CGFloat ambientH = (home && self.field.stringValue.length == 0 && self.ambient.segments.count) ? kAmbientH : 0;   // Home only
     CGFloat appsH = home && self.homeApps > 0 ? kGridH : 0;
     CGFloat quickH = home && self.homeQuick > 0 ? kQuickH : 0;
     CGFloat listH = home ? [self.homeList fittingHeight] : 0;
     CGFloat tailH = (home && quickH > 0 && listH == 0) ? 10 : 0;   // breathing room when the pills are the last row
-    CGFloat bodyH = mediaH + (home ? appsH + quickH + listH + tailH : (rows > 0 ? rows * kRowH + 12 : 0));
+    CGFloat bodyH = ambientH + mediaH + (home ? appsH + quickH + listH + tailH : (rows > 0 ? rows * kRowH + 12 : 0));
     CGFloat footH = bodyH > 0 ? kFooterH : 0;
     CGFloat H = kSearchH + bodyH + footH;
     NSRect fr = self.panel.frame;
-    CGFloat top = fr.origin.y + fr.size.height;
-    NSScreen *scr = self.panel.screen ?: NSScreen.mainScreen;     // tall home screens never run off the bottom
-    if (scr && top - H < NSMinY(scr.visibleFrame) + 12) top = MIN(NSMinY(scr.visibleFrame) + 12 + H, NSMaxY(scr.visibleFrame) - 12);
-    [self.panel setFrame:NSMakeRect(fr.origin.x, top - H, kW, H) display:YES animate:NO];
+    // Opens centred on the screen; from then on its top edge stays put, so the search field never moves and the
+    // results grow and shrink downwards only. (Re-centring on every keystroke made the panel bob up and down.)
+    NSScreen *scr = self.panel.screen ?: NSScreen.mainScreen;
+    NSRect v = scr ? usableFrame(scr) : fr;
+    if (self.anchorTop <= 0 && H > kSearchH + 1) self.anchorTop = round(NSMidY(v) + H / 2);   // the first real layout sets it
+    CGFloat bottom = self.anchorTop > 0 ? self.anchorTop - H : round(NSMidY(v) - H / 2);
+    bottom = MAX(NSMinY(v) + 12, MIN(bottom, NSMaxY(v) - 12 - H));
+    [self.panel setFrame:NSMakeRect(fr.origin.x, bottom, kW, H) display:YES animate:NO];
     [self.panel invalidateShadow];
     CGFloat sy = H - kSearchH;                                   // bottom of search row
     self.chip.text = self.modeLabel;
@@ -169,9 +179,11 @@
     self.quick.hidden = quickH == 0;
     self.homeList.hidden = listH == 0;
     self.media.hidden = !showMedia;
-    if (showMedia) self.media.frame = NSMakeRect(0, sy - mediaH, kW, mediaH);
+    self.ambient.hidden = ambientH == 0;
+    if (ambientH > 0) self.ambient.frame = NSMakeRect(0, sy - ambientH, kW, ambientH);
+    if (showMedia) self.media.frame = NSMakeRect(0, sy - ambientH - mediaH, kW, mediaH);
     if (home) {
-        CGFloat y = sy - mediaH;
+        CGFloat y = sy - ambientH - mediaH;
         if (appsH > 0) {
             self.gridTitle.frame = NSMakeRect(kInset, y - 30, 200, 14);
             self.grid.frame = NSMakeRect(0, y - 32 - kCellH, kW, kCellH);
@@ -226,15 +238,19 @@
     for (NSScreen *s in NSScreen.screens) if (NSMouseInRect(mouse, s.frame, NO)) scr = s;
     NSRect v = scr.visibleFrame;
     CGFloat x = v.origin.x + (v.size.width - kW) / 2;
-    CGFloat top = v.origin.y + v.size.height - floor(v.size.height * 0.20);
-    [self.panel setFrame:NSMakeRect(x, top - kSearchH, kW, kSearchH) display:NO];
+    v = usableFrame(scr);                                       // the screen above the taskbar
+    self.anchorTop = 0;                                         // re-centre for this opening
+    [self.panel setFrame:NSMakeRect(x, round(NSMidY(v) - kSearchH / 2), kW, kSearchH) display:NO];   // centred; layoutForRows keeps it centred
 }
 
 - (void)show {
+    if (self.snapshotDir) return;                 // snapshots render offscreen and never take your context
     [self loadConfig];
     self.previousApp = [NSWorkspace sharedWorkspace].frontmostApplication;
     if (self.previousApp == NSRunningApplication.currentApplication && !self.panel.visible) self.previousApp = nil;
     [self captureContext];                        // selected text + the app in front, read before the panel takes focus
+    [self refreshTabs];                           // open browser tabs, for tab search and a browser's Home
+    [self updateAmbient];
     self.windowList = nil; [self refreshWindowList];
     self.cmdHeld = NO;
     if ([NSDate date].timeIntervalSince1970 - self.lastScan > 120) [self scanApps];
@@ -250,9 +266,11 @@
     [self.mediaTimer invalidate];
     __weak CApp *ws = self;
     self.mediaTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) {
-        if ([ws ytmMode]) [ws refreshYTM]; else if (!ws.media.hidden) [ws updateMediaView]; }];
+        if ([ws ytmMode]) [ws refreshYTM]; else if (!ws.media.hidden) [ws updateMediaView];
+        BOOL had = ws.ambient.segments.count > 0; [ws updateAmbient];
+        if (had != (ws.ambient.segments.count > 0) && ws.gridMode) [ws layoutForRows:ws.items.count]; }];
 }
-- (void)hide { [self.panel orderOut:nil]; [self stopFileSearch]; [self.mediaTimer invalidate]; self.mediaTimer = nil; }
+- (void)hide { [self hidePreview]; [self.panel orderOut:nil]; [self stopFileSearch]; [self.mediaTimer invalidate]; self.mediaTimer = nil; }
 
 
 - (void)toggle { if (self.panel.visible && self.panel.keyWindow) [self hide]; else [self show]; }

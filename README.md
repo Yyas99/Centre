@@ -16,23 +16,31 @@
 </p>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/home-dark.png">
-    <img src="docs/home-light.png" width="780" alt="Centre's home screen: now playing, most used apps, pinned actions, clipboard, recent files and recent commands">
-  </picture>
+  <img src="docs/home-dark.png" width="780" alt="Centre's home screen: now playing, most used apps, pinned actions and clipboard">
 </p>
 
 ## Highlights
 
 - **One search for everything.** Apps, System Settings panes, commands, quick links and files (via Spotlight), ranked by how often you use them.
-- **A home screen that knows what you were doing.** Select text anywhere and Home offers to search, define, translate or transform it. Open Centre from a browser and it can copy the page as a link, a Markdown link or a clean URL; from Finder it opens Terminal there or copies paths. Below that: now playing, most-used apps, your pins, clipboard, recent files and commands.
+- **A home screen that knows what you were doing.** Select text anywhere and Home offers to search, define, translate or transform it. Open Centre from a browser and it lists that window's other tabs and can copy the page as a link, a Markdown link or a clean URL; from a terminal it offers your last commands; from Finder it opens Terminal there or copies paths. Below that: now playing, the apps you usually open at this hour, your pins, clipboard, recent files and commands.
+- **A quiet status line.** Under the search field: the time, your next event, a running timer, battery and network.
+- **Notes and tabs.** `note call the bank` keeps a line on Home until you tick it off. `tab` searches every open tab in Brave, Chrome, Arc, Edge, Vivaldi, Helium and Safari and jumps straight to it.
+- **Glance, shelf and sessions.** Hold `⌘ Space` for a glance (time, next event, music, battery, last copy) that disappears when you let go. Drag anything onto the drop zone at the top of the screen and it waits on Home's shelf. `save session Study` remembers which apps are open and where; typing `Study` puts it all back. Rest on a file or clipboard entry to preview it beside the panel.
 - **A taskbar, too.** An optional floating bar along the bottom: pinned and running apps with live indicators, window lists, now playing, volume, Wi-Fi, battery and a clock. It can hide the macOS Dock while it's on, and gives your Dock back exactly as it was.
 - **Yours to shape.** Pin anything to Home with `⇧⌘P`. Write your own shell or AppleScript commands, chain commands into flows, save snippets, and give any of them a global shortcut.
 - **Tools built in.** Calculator and unit conversions, offline dictionary, timers, volume, Keep Awake, password / passphrase / PIN generator, clipboard history, window snapping (halves, thirds, next display), quit and force-quit.
 - **Keyboard first.** Arrow keys everywhere, `⌘1`–`⌘9` to jump, `⌘↩` for the alternate action, `Tab` to complete.
-- **Native and light.** AppKit, vibrancy, light and dark mode. Every build checks itself before it replaces the running app.
+- **Native and light.** AppKit with an obsidian glass look: deep, matte and translucent, with one ice-blue focus ring so you always know what `↩` will do. The player takes its accent from the album art, and its × hides it until the next song plays. Every build checks itself before it replaces the running app.
 
 <table>
+  <tr>
+    <td width="50%"><img src="docs/deck.png" alt="Home opened from Safari: status line, a note and the window's other tabs"></td>
+    <td width="50%"><img src="docs/tabs.png" alt="Searching open browser tabs"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Opened from Safari: the status line, a note and that window's other tabs</sub></td>
+    <td align="center"><sub><code>tab guide</code> finds any open tab and jumps to it</sub></td>
+  </tr>
   <tr>
     <td width="50%"><img src="docs/commands.png" alt="Window commands with coloured tiles"></td>
     <td width="50%"><img src="docs/passwords.png" alt="Password generator"></td>
@@ -54,17 +62,15 @@
 ## Taskbar
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/taskbar-dark.png">
-    <img src="docs/taskbar-light.png" width="900" alt="Centre's floating taskbar: launcher, apps with running indicators, now playing, volume, Wi-Fi, battery and clock">
-  </picture>
+  <img src="docs/taskbar-dark.png" width="900" alt="Centre's floating taskbar: launcher, apps with running indicators, now playing, volume, Wi-Fi, battery and clock">
 </p>
 
-A floating bar in the spirit of KDE Plasma's panel, on every Space and out of the way of full-screen apps.
+A floating bar in the spirit of KDE Plasma's panel, on every Space, hidden while anything is full screen.
 
-- **Apps:** pinned apps, then anything else running. A short line marks a running app; the one in front is lit. Click to bring an app forward, again to hide it; drag pinned apps to reorder; right-click for its windows, Hide, Pin, Quit.
-- **Tray:** now playing (click to play or pause), volume (scroll to change, click to mute), Wi-Fi, battery, and a clock that opens a calendar. Right-click any of them for its System Settings page.
-- **Show desktop:** hides every app; click again to bring back exactly those apps.
+- **Apps:** pinned apps, then anything else running, with one button per window if you like (minimised and private windows included). A short line marks a running app; the one in front is lit. Click to bring an app or window forward, again to hide it; an app with no windows opens a new one. Drag pinned apps to reorder; right-click for its windows, Hide, Pin, Quit and Force Quit (Finder offers Relaunch instead).
+- **Windows:** windows are kept just above the bar instead of sliding under it, even after zooming. Optional quick minimise makes windows vanish instantly instead of animating into the Dock.
+- **Tray:** now playing with previous, play and next, a scrolling title and a player popover (any app macOS reports as playing, plus YouTube Music); a mirror of your menu bar icons (off by default); volume (scroll to change, click to mute), Wi-Fi, battery, and a clock that opens a calendar. Right-click any of them for its System Settings page.
+- **Show desktop:** hides every app; click again to bring back exactly those windows.
 - **Settings › Taskbar:** bottom or top, three sizes, floating or edge to edge, auto-hide, app names, 24-hour time, each tray item, and what the Dock does while the bar is on (stays, auto-hides, or is turned off; your own Dock settings come back when the bar is off or Centre quits). Window snapping leaves the bar uncovered.
 
 ## Keys
@@ -87,6 +93,9 @@ A floating bar in the spirit of KDE Plasma's panel, on every Space and out of th
 | --- | --- |
 | `clip` · `v ` | Search clipboard history |
 | `f report` · `find report` | Search files |
+| `note call the bank` · `notes` | Keep a line on Home, or see them all |
+| `tab guide` · `tabs` | Search open browser tabs and jump to one |
+| `save session Study` · `Study` | Save the open apps and window positions; type the name to restore |
 | `/documents` · `~/doc/rep` | Open folders and files by path, any case; `Tab` completes like a shell |
 | `pw 32` | Generate passwords of a given length |
 | `quit` · `kill` | Quit or force-quit running apps |
@@ -117,13 +126,13 @@ Needs only the Xcode Command Line Tools (`xcode-select --install`).
 
 Or double-click **Rebuild Centre.command**. While Centre is running, saving any file in `Sources/` rebuilds and relaunches it automatically.
 
-Each new build runs `Centre --selftest` (64 checks: calculator, units, durations, paths, transforms, time zones, snippets, hotkeys, emoji) and only replaces the app if every check passes; otherwise the working version stays and the reason is in `build.log`.
+Each new build runs `Centre --selftest` (66 checks: calculator, units, durations, paths, transforms, time zones, snippets, hotkeys, emoji) and only replaces the app if every check passes; otherwise the working version stays and the reason is in `build.log`.
 
 | File | Contains |
 | --- | --- |
 | `Centre.h` · `Util.m` · `Theme.m` | Model, shared helpers, design tokens and the HUD |
 | `Views.h` · `Views.m` | Panel, rows, grid, home lists and the media player |
-| `App.m` · `App+*.m` | The app: Search, Home, UI, Media, Tools, Library (pins, your commands, flows, snippets, shortcuts), Context (selection, app actions, windows) and Snapshots |
+| `App.m` · `App+*.m` | The app: Search, Home, UI, Media, Tools, Library (pins, your commands, flows, snippets, shortcuts), Context (selection, app actions, windows), Deck (tabs, notes, status line), Glance (peek, shelf, sessions, preview) and Snapshots |
 | `Logic.m` | Pure logic for transforms, time zones, snippets, hotkeys and emoji — covered by the self-test |
 | `Taskbar.m` | The taskbar: layout, drawing, tray, Dock handling and auto-hide |
 | `Settings.m` | The settings window |
@@ -152,12 +161,13 @@ Everything is set in a native settings window (`⌘ ,`) and stored in `~/Library
 | Permission | Used for |
 | --- | --- |
 | Accessibility | Window snapping, the window switcher, pasting snippets and clipboard items, reading selected text, taskbar window lists |
-| Automation | System commands (sleep, dark mode, empty trash) and YouTube Music control |
+| Automation | System commands (sleep, dark mode, empty trash), reading and switching browser tabs, and YouTube Music control |
+| Calendar | Your next event in the status line and the glance (optional) |
 | Documents | Recent files on the home screen |
 
 ## Privacy
 
-No accounts and no analytics. Clipboard history lives in memory only (when Centre rebuilds itself it's handed to the new process through a private file that is deleted straight away) and skips items that password managers mark as concealed. Generated passwords are marked concealed too, and are cleared from the clipboard after 90 seconds.
+No accounts and no analytics. Clipboard history lives in memory only (when Centre rebuilds itself it's handed to the new process through a private file that is deleted straight away) and skips items that password managers mark as concealed. Generated passwords are marked concealed too, and are cleared from the clipboard after 90 seconds. Notes, the shelf and window sessions stay on your Mac in Centre's own folder.
 
 <br>
 

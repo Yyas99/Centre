@@ -18,6 +18,8 @@ int main(int argc, const char *argv[]) {
         if (!snapDir) for (NSRunningApplication *r in [NSRunningApplication runningApplicationsWithBundleIdentifier:bid]) {
             // LaunchServices can still list a copy that has just exited (right after a self-rebuild);
             // only defer to one that is really alive, or both would be gone.
+            // A screenshot run (--snapshot/--readme) is never "the" Centre: it runs hidden with no Dock presence.
+            if (r.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
             if (r.processIdentifier != me && !r.terminated && kill(r.processIdentifier, 0) == 0) {
                 [[NSDistributedNotificationCenter defaultCenter] postNotificationName:@"com.y.centre.show" object:nil userInfo:nil deliverImmediately:YES];
                 return 0;

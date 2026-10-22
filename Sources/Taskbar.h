@@ -2,7 +2,7 @@
 // A floating, Plasma-style taskbar: launcher, pinned and running apps, tray, clock and show-desktop.
 #import "Centre.h"
 
-@class CApp;
+@class CApp, CMediaView;
 @interface CTaskbar : NSObject
 - (instancetype)initWithApp:(CApp *)app;
 - (void)apply;                                     // show, hide or reposition from config
@@ -10,6 +10,8 @@
 - (void)setPinnedPaths:(NSArray<NSString *> *)paths;
 - (NSArray<NSString *> *)defaultPins;              // Finder plus the apps kept in the Dock
 - (NSView *)snapshotView;                          // --snapshot: the bar rendered offscreen
-- (void)restoreDockNow;                            // on quit: put your own Dock settings back
+- (void)restoreDockNow;
+- (CMediaView *)mediaPopoverView;                  // the player popover while it's open, else nil
+- (BOOL)wantsMedia;                                // the bar shows what's playing                            // on quit: put your own Dock settings back
 - (void)useSampleApps:(NSArray<NSString *> *)paths running:(NSArray<NSString *> *)running active:(NSString *)active;   // README shots
 @end

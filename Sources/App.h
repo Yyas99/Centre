@@ -24,6 +24,8 @@
 @property (nonatomic, strong) NSDate *nowStamp;
 @property (nonatomic) double nowDuration, nowElapsed, nowRate;
 @property (nonatomic) BOOL ytmBusy;
+@property (nonatomic) BOOL mediaDismissed, mediaSeenPlaying;   // × on the player: hidden until playback starts again
+@property (nonatomic, copy) NSString *mediaSeenTitle;
 @property (nonatomic, copy) NSString *ytmArtURL;
 @property (nonatomic, strong) CGridView *grid;
 @property (nonatomic) BOOL gridMode;
@@ -78,6 +80,26 @@
 @property (nonatomic, strong) NSMutableSet<NSString *> *hotKeyFailures;    // keys whose shortcut another app owns
 @property (nonatomic, copy) NSString *hotKeyArmedKey;                 // irreversible command waiting for its shortcut again
 @property (nonatomic, strong) NSDate *hotKeyArmedAt;
+// Glance features (App+Glance.m)
+@property (nonatomic, strong) NSPanel *peekPanel, *dropZone, *previewPanel;
+@property (nonatomic, strong) NSTimer *peekWatch, *previewTimer, *holdTimer;
+@property (nonatomic) BOOL hotKeyHeld, peekShowing;
+@property (nonatomic, strong) id calendarStore;
+@property (nonatomic) BOOL calendarAsked;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *shelf;
+@property (nonatomic, strong) id dragDownMonitor, dragMoveMonitor, dragUpMonitor;
+@property (nonatomic) NSInteger dragPBCount;
+@property (nonatomic) BOOL dragActive;
+@property (nonatomic, strong) NSView *previewQL;
+@property (nonatomic, strong) NSScrollView *previewTextScroll;
+@property (nonatomic, weak) CItem *previewedItem, *previewPending;
+@property (nonatomic, strong) NSDate *previewPendingAt;
+@property (nonatomic) CGFloat anchorTop;
+// Deck (App+Deck.m)
+@property (nonatomic, strong) NSArray<NSDictionary *> *browserTabs;
+@property (nonatomic) BOOL tabsBusy;
+@property (nonatomic, strong) NSMutableArray<NSDictionary *> *notes;
+@property (nonatomic, strong) CAmbient *ambient;                    // the panel's top edge, fixed once it opens (0: not placed yet)
 - (NSString *)configPath;
 - (void)loadConfig;
 - (NSString *)usagePath;
@@ -186,6 +208,7 @@
 - (void)startMediaObservers;
 - (void)refreshNowPlaying;
 - (void)updateMediaView;
+- (void)dismissMedia;
 - (double)currentElapsed;
 - (void)mediaSeek:(double)fraction;
 - (void)mediaCommand:(int)cmd;
@@ -245,6 +268,32 @@
 - (NSArray<CItem *> *)portItems:(NSString *)port;
 - (NSArray<CItem *> *)emojiItems:(NSString *)q;
 - (NSArray<CItem *> *)systemInfoItems;
+@end
+
+@interface CApp (Glance)
+- (double)timelyScore:(NSString *)key;                       // how much this fits the hour and the app you came from
+- (void)hotKeyPressed;
+- (void)hotKeyReleased;
+- (void)showPeek;
+- (void)hidePeek;
+- (void)loadShelf;
+- (void)startShelfWatch;
+- (NSArray<CItem *> *)shelfItems;
+- (void)shelfRemove:(NSString *)sid;
+- (id)addToShelfFrom:(NSPasteboard *)pb;                     // non-nil when something was added
+- (NSArray<CItem *> *)glanceItemsFor:(NSString *)q;         // sessions and shelf commands for search
+- (void)startPreviewWatch;
+- (void)hidePreview;
+- (NSArray *)nextEvent;                                      // @[symbol, title, detail] or nil
+@end
+
+@interface CApp (Deck)
+- (void)refreshTabs;
+- (NSArray<CItem *> *)deckContextItems;                      // other tabs (browsers), last commands (terminals)
+- (NSArray<CItem *> *)deckItemsFor:(NSString *)q;            // notes and open tabs for search
+- (NSArray<CItem *> *)noteItems;
+- (NSArray<CItem *> *)tabItemsFor:(NSString *)q limit:(NSUInteger)limit;   // "" lists them all
+- (void)updateAmbient;
 @end
 
 @interface CApp (Snapshots)

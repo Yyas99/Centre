@@ -19,8 +19,15 @@ BOOL cIsDark(NSView *v) {
 }
 // Selection fill + hairline shared by result rows, grid cells and the settings sidebar: neutral glass with
 // a breath of the ice accent, so the selection reads as "lit" rather than as a grey box.
-NSColor *cSelFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.62 green:0.80 blue:1.00 alpha:0.115] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.085]; }
-NSColor *cSelEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.70 green:0.86 blue:1.00 alpha:0.10] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.10]; }
+// Obsidian glass: rows and pills select as a neutral pane of glass; the ice accent is kept for the one thing
+// you're pointing at in the app row (cIceFill / cIceEdge), so colour means "here".
+// One focus language everywhere (rows, app cells, pills, Settings): a lit ice pane, so it's never a guess what ↩ will run.
+NSColor *cSelFill(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.61 green:0.76 blue:1.00 alpha:0.13] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.085]; }
+NSColor *cSelEdge(NSView *v) { return cIsDark(v) ? [NSColor colorWithSRGBRed:0.61 green:0.76 blue:1.00 alpha:0.42] : [NSColor colorWithSRGBRed:0.10 green:0.42 blue:0.85 alpha:0.10]; }
+NSColor *cIceFill(void) { return [NSColor colorWithSRGBRed:0.61 green:0.76 blue:1.00 alpha:0.12]; }
+NSColor *cIceEdge(void) { return [NSColor colorWithSRGBRed:0.61 green:0.76 blue:1.00 alpha:0.45]; }
+// The obsidian tint laid over every blur: dark enough to read as matte, light enough that the wallpaper still glows through.
+NSColor *cObsidian(void) { return [NSColor colorWithSRGBRed:0.039 green:0.043 blue:0.051 alpha:0.80]; }
 
 // Explicitly dynamic (an alpha-adjusted labelColor can freeze to one appearance inside attributed strings).
 static NSColor *sectionColor(void) {
@@ -89,7 +96,13 @@ NSArray<NSColor *> *tileColors(NSString *kind) {
                  @"Info":       @[rgb(0.45, 0.62, 0.80), rgb(0.26, 0.42, 0.62)],
                  @"Emoji":      @[rgb(1.00, 0.82, 0.32), rgb(0.93, 0.62, 0.10)],
                  @"Open Window":@[rgb(0.36, 0.62, 1.00), rgb(0.15, 0.42, 0.93)],
-                 @"Folder":     @[rgb(0.36, 0.70, 1.00), rgb(0.15, 0.50, 0.93)] };
+                 @"Folder":     @[rgb(0.36, 0.70, 1.00), rgb(0.15, 0.50, 0.93)],
+                 // The deck and the shelf: each new kind gets its own quiet hue, so a glance tells them apart.
+                 @"Tab":        @[rgb(0.52, 0.56, 0.98), rgb(0.33, 0.35, 0.86)],
+                 @"Note":       @[rgb(0.99, 0.80, 0.38), rgb(0.89, 0.58, 0.12)],
+                 @"Shell History": @[rgb(0.36, 0.74, 0.58), rgb(0.16, 0.50, 0.38)],
+                 @"Shelf":      @[rgb(0.36, 0.80, 0.86), rgb(0.12, 0.56, 0.64)],
+                 @"Session":    @[rgb(0.70, 0.52, 0.98), rgb(0.48, 0.28, 0.86)] };
     });
     return map[kind ?: @""] ?: map[@"System"];
 }
@@ -141,6 +154,10 @@ NSPanel *prepareHUD(NSString *text, NSString *symbol) {
             [[NSColor blackColor] set]; [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:R yRadius:R] fill]; return YES; }];
         mask.capInsets = NSEdgeInsetsMake(R, R, R, R); mask.resizingMode = NSImageResizingModeStretch;
         fx.maskImage = mask; fx.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        NSView *tint = [[NSView alloc] initWithFrame:fx.bounds]; tint.wantsLayer = YES;              // obsidian glass
+        tint.layer.backgroundColor = cObsidian().CGColor; tint.layer.cornerRadius = R;
+        tint.layer.borderWidth = 1; tint.layer.borderColor = [NSColor colorWithWhite:1 alpha:0.09].CGColor;
+        tint.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable; [fx addSubview:tint];
         icon = [NSImageView new]; icon.imageScaling = NSImageScaleProportionallyDown;
         label = [NSTextField labelWithString:@""]; label.font = [NSFont systemFontOfSize:13 weight:NSFontWeightMedium];
         [fx addSubview:icon]; [fx addSubview:label];

@@ -51,11 +51,12 @@
         [[[NSGradient alloc] initWithStartingColor:[NSColor colorWithWhite:1 alpha:0.55] endingColor:[NSColor colorWithWhite:1 alpha:0]]
             drawInBezierPath:[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(40, 70, 130, 130)] relativeCenterPosition:NSMakePoint(-0.2, 0.2)];
         return YES; }];
-    for (NSString *mode in @[@"dark", @"light"]) {
+    for (NSString *mode in @[@"dark"]) {   // Centre is obsidian-only now
         NSApp.appearance = [NSAppearance appearanceNamed:[mode isEqualToString:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
         [self buildUI]; [self positionPanel];
         self.hasNow = YES; self.nowTitle = @"Midnight City"; self.nowArtist = @"M83"; self.nowApp = @"Music"; self.nowArt = art;
         self.nowDuration = 243; self.nowElapsed = 71; self.nowStamp = [NSDate date]; self.nowRate = 1; self.isPlaying = YES;
+        self.selectedText = nil; self.contextAppName = nil; self.contextBundleID = nil;
         self.field.stringValue = @""; [self refresh]; [self updateMediaView];
         if ([mode isEqualToString:@"dark"]) {                  // warm-up pass: some app icons (Photos) load lazily on first draw
             [self snapshotView:self.panel.contentView name:@"home-warmup" radius:kRadius];
@@ -77,6 +78,19 @@
         self.field.stringValue = @"tx"; [self refresh]; [self stopFileSearch];
         [self snapshotView:self.panel.contentView name:@"transform" radius:kRadius];
         self.selectedText = nil; self.contextAppName = nil; self.contextBundleID = nil;
+        // The deck: arriving from a browser (its other tabs), a note, tab search
+        self.notes = [@[@{@"id": @"n1", @"text": @"Email the supervisor about Friday", @"added": @([NSDate date].timeIntervalSince1970 - 1800)}] mutableCopy];
+        self.browserTabs = @[@{@"bid": @"com.apple.Safari", @"app": @"Safari", @"w": @1, @"t": @1, @"active": @YES, @"title": @"Inbox", @"url": @"https://mail.example.com"},
+                             @{@"bid": @"com.apple.Safari", @"app": @"Safari", @"w": @1, @"t": @2, @"active": @NO, @"title": @"Human Interface Guidelines", @"url": @"https://developer.apple.com/design"},
+                             @{@"bid": @"com.apple.Safari", @"app": @"Safari", @"w": @1, @"t": @3, @"active": @NO, @"title": @"Weather · Melbourne", @"url": @"https://bom.gov.au"}];
+        self.contextAppName = @"Safari"; self.contextBundleID = @"com.apple.Safari";
+        self.field.stringValue = @""; [self updateAmbient]; [self refresh];
+        [self snapshotView:self.panel.contentView name:@"deck" radius:kRadius];
+        self.field.stringValue = @"tab guide"; [self refresh]; [self stopFileSearch];
+        [self snapshotView:self.panel.contentView name:@"tabs" radius:kRadius];
+        self.field.stringValue = @"note call the bank"; [self refresh]; [self stopFileSearch];
+        [self snapshotView:self.panel.contentView name:@"note" radius:kRadius];
+        self.notes = [NSMutableArray new]; self.browserTabs = nil; self.contextAppName = nil; self.contextBundleID = nil;
         // Settings › Commands with example commands (in memory only)
         CSettings *st = [[CSettings alloc] initWithApp:self]; [st useSampleData];
         st.window.appearance = NSApp.appearance;
@@ -92,7 +106,7 @@
                       @"/System/Applications/Utilities/Terminal.app", @"/System/Applications/System Settings.app"];
     [self.taskbar useSampleApps:apps running:@[apps[0], apps[1], apps[3], apps[5]] active:apps[1]];
     self.hasNow = YES; self.nowTitle = @"Midnight City"; self.nowArtist = @"M83"; self.nowApp = @"Music"; self.nowArt = art; self.isPlaying = YES;
-    for (NSString *mode in @[@"dark", @"light"]) {
+    for (NSString *mode in @[@"dark"]) {   // Centre is obsidian-only now
         NSApp.appearance = [NSAppearance appearanceNamed:[mode isEqualToString:@"dark"] ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
         NSView *bar = [self.taskbar snapshotView];
         bar.window.appearance = NSApp.appearance;
@@ -118,6 +132,19 @@
     self.timers = [@[[@{@"end": [NSDate dateWithTimeIntervalSinceNow:462], @"label": @"Tea", @"total": @600} mutableCopy]] mutableCopy];
     self.field.stringValue = @""; [self refresh];
     [self snapshotView:self.panel.contentView name:@"dark-28-home-timer" radius:kRadius];
+    // The deck: arriving from a browser (other tabs as context), with a note and the status line (sample data only)
+    self.notes = [@[@{@"id": @"n1", @"text": @"Email the thesis supervisor about Friday", @"added": @([NSDate date].timeIntervalSince1970 - 1800)}] mutableCopy];
+    self.browserTabs = @[@{@"bid": @"com.brave.Browser", @"app": @"Brave Browser", @"w": @1, @"t": @1, @"active": @YES, @"title": @"Inbox", @"url": @"https://mail.example.com"},
+                         @{@"bid": @"com.brave.Browser", @"app": @"Brave Browser", @"w": @1, @"t": @2, @"active": @NO, @"title": @"Human Interface Guidelines", @"url": @"https://developer.apple.com/design"},
+                         @{@"bid": @"com.brave.Browser", @"app": @"Brave Browser", @"w": @1, @"t": @3, @"active": @NO, @"title": @"Melbourne weather", @"url": @"https://bom.gov.au"}];
+    self.contextAppName = @"Brave Browser"; self.contextBundleID = @"com.brave.Browser"; self.selectedText = nil;
+    self.field.stringValue = @""; [self updateAmbient]; [self refresh];
+    [self snapshotView:self.panel.contentView name:@"dark-40-deck-browser" radius:kRadius];
+    self.field.stringValue = @"tab guide"; [self refresh]; [self stopFileSearch];
+    [self snapshotView:self.panel.contentView name:@"dark-41-tab-search" radius:kRadius];
+    self.field.stringValue = @"note call the bank"; [self refresh]; [self stopFileSearch];
+    [self snapshotView:self.panel.contentView name:@"dark-42-note" radius:kRadius];
+    self.notes = nil; self.browserTabs = nil; self.contextBundleID = nil; self.contextAppName = nil;
     self.timers = nil;
     // Context-aware home: text selected in another app, then arriving from a browser
     self.selectedText = @"The quick brown fox jumps over the lazy dog"; self.contextAppName = @"Notes"; self.contextBundleID = @"com.apple.Notes";
@@ -206,6 +233,7 @@
     [self scanApps];
     [self refreshWindowList];
     if (self.readmeMode) {   // neutral sample data so public screenshots show nothing personal
+        self.notes = [NSMutableArray new]; self.shelf = [NSMutableArray new]; self.timers = nil;   // never your own notes or shelf
         [self.clips addObjectsFromArray:@[@"brew install --cask iina", @"Meeting moved to 3:30 pm, room 4.12",
                                           @"https://developer.apple.com/design/human-interface-guidelines", @"git commit -m \"Tighten launcher spacing\""]];
         NSString *docs = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];

@@ -30,6 +30,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>Centre runs system commands (sleep, dark mode, empty trash, login item) through System Events and Finder.</string>
+  <key>NSCalendarsUsageDescription</key><string>Centre shows your next event when you hold its shortcut for a glance.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>Centre shows your next event when you hold its shortcut for a glance.</string>
   <key>NSHumanReadableCopyright</key><string>Y</string>
 </dict></plist>
 PLIST
@@ -54,6 +56,7 @@ if [ "$1" = "build" ] || stale; then
   if ! wait $T; then echo "Self-test failed — keeping the previous build" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1; fi
 
   mv -f "$BIN.new" "$BIN"
+  "$BIN" --readme "$DIR/_shots" >/dev/null 2>&1 & # TEMP-SNAPSHOT
   if command -v codesign >/dev/null 2>&1; then
     # Sign with the local certificate from setup-signing.sh when it exists, so macOS keeps Centre's
     # permissions across rebuilds; otherwise fall back to an ad-hoc signature.

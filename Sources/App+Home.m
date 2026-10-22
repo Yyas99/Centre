@@ -16,7 +16,8 @@
     NSMutableDictionary<NSString *, NSNumber *> *rk = [NSMutableDictionary dictionaryWithCapacity:self.apps.count];
     for (CItem *a in self.apps) {
         if (!a.path.length) continue;
-        double s = [self.usage[a.path][@"count"] doubleValue] * 1000;
+        // Launches, weighted toward the ones you make at this hour and from the app you're in (timed suggestions).
+        double s = MIN([self.usage[a.path][@"count"] doubleValue], 60) * 1000 + [self timelyScore:a.path] * 3000;
         NSUInteger di = [dock indexOfObject:a.path]; if (di != NSNotFound) s += 500 - (double)di;
         if ([running containsObject:a.path]) s += 100;
         if ([a.path isEqualToString:me]) s = -1;
@@ -62,7 +63,7 @@
 
 // Files you opened anywhere on the Mac in the last two weeks (Spotlight's last-used date). Cached; refreshed on every show.
 - (void)startRecentFilesQuery {
-    if (self.recentQuery) return;
+    if (self.recentQuery || self.readmeMode) return;   // public screenshots use sample files only
     NSMetadataQuery *mq = [NSMetadataQuery new];
     mq.searchScopes = @[NSHomeDirectory()];
     mq.predicate = [NSPredicate predicateWithFormat:@"kMDItemLastUsedDate >= %@", [NSDate dateWithTimeIntervalSinceNow:-14 * 86400]];
@@ -115,9 +116,16 @@
 
     NSArray *timers = self.timers.count ? [self activeTimerItems] : @[];
     NSMutableArray *selection = [(on(@"homeContext") ? [self selectionItems] : @[]) mutableCopy];
-    NSMutableArray *context = [(on(@"homeContext") && !selection.count ? [self appContextItems] : @[]) mutableCopy];
-    if (context.count > 3) [context removeObjectsInRange:NSMakeRange(3, context.count - 3)];
-    NSMutableArray *clips = [NSMutableArray new], *files = [NSMutableArray new], *cmds = [NSMutableArray new];
+    // Context Home: the app you came from shapes this section (a browser's other tabs, a terminal's last commands,
+    // then that app's actions). Up to five rows when there's that much to say.
+    NSMutableArray *context = [NSMutableArray new];
+    if (on(@"homeContext") && !selection.count) { [context addObjectsFromArray:[self deckContextItems]]; [context addObjectsFromArray:[self appContextItems]]; }
+    if (context.count > 5) [context removeObjectsInRange:NSMakeRange(5, context.count - 5)];
+    NSMutableArray *notes = [[self noteItems] mutableCopy];
+    if (notes.count > 3) [notes removeObjectsInRange:NSMakeRange(3, notes.count - 3)];
+    NSMutableArray *clips = [NSMutableArray new], *files = [NSMutableArray new], *cmds = [NSMutableArray new], *usual = [NSMutableArray new];
+    NSMutableArray *shelf = [[self shelfItems] mutableCopy];
+    if (shelf.count > 4) [shelf removeObjectsInRange:NSMakeRange(4, shelf.count - 4)];   // type "shelf" for all of it
     if (on(@"homeClipboard")) {
         NSArray *cl = [self clipItems:@""];
         for (NSUInteger k = 0; k < MIN(cl.count, (NSUInteger)2); k++) {
@@ -138,21 +146,41 @@
     }
     if (on(@"homeCommands")) {
         NSMutableSet *skip = [NSMutableSet new]; for (CItem *c in quick) if (c.key) [skip addObject:c.key];
+        // Usually now: commands you tend to run at this hour or from this app (at least twice), ahead of plain recency.
+        NSMutableArray *timely = [NSMutableArray new];
+        for (NSString *k in self.usage) {
+            if (!([k hasPrefix:@"cmd:"] || [k hasPrefix:@"custom:"] || [k hasPrefix:@"snip:"] || [k hasPrefix:@"tx:"]) || [skip containsObject:k]) continue;
+            double t = [self timelyScore:k]; if (t >= 2) [timely addObject:@[k, @(t)]];
+        }
+        [timely sortUsingComparator:^NSComparisonResult(NSArray *a, NSArray *b) { return [b[1] compare:a[1]]; }];
+        for (NSArray *p in timely) {
+            if (usual.count >= 2) break;
+            CItem *i = [self itemForKey:p[0]]; if (!i || i.keepsPanel) continue;
+            if (!i.key) i.key = p[0];
+            if (![i.kind isEqualToString:@"Transform"]) i.subtitle = nil;
+            i.detail = @"Usually now";
+            [usual addObject:i]; [skip addObject:p[0]];
+        }
         [cmds addObjectsFromArray:[self recentCommands:2 exclude:skip]];
     }
     // One glance: drop the least time-sensitive rows first.
     // Fit the screen: the panel opens 20% from the top, so Home gets the rest minus its fixed parts.
     NSScreen *scr = self.panel.screen ?: NSScreen.mainScreen;
-    CGFloat room = NSHeight(scr.visibleFrame) * 0.8 - 12 - kSearchH - kFooterH - (self.hasNow ? kMediaH : 0) - (apps.count ? kGridH : 0) - (quick.count ? kQuickH : 0);
+    CGFloat room = NSHeight(scr.visibleFrame) * 0.8 - 12 - kSearchH - kFooterH - kAmbientH - (self.hasNow && !self.mediaDismissed ? kMediaH : 0) - (apps.count ? kGridH : 0) - (quick.count ? kQuickH : 0);
     NSInteger budget = MIN(8, MAX(2, (NSInteger)floor((room - 3 * kHomeHeadH) / kHomeRowH)));
-    NSInteger (^total)(void) = ^NSInteger { return (NSInteger)(timers.count + selection.count + context.count + clips.count + files.count + cmds.count); };
+    NSInteger (^total)(void) = ^NSInteger { return (NSInteger)(timers.count + notes.count + shelf.count + selection.count + context.count + usual.count + clips.count + files.count + cmds.count); };
     while (total() > budget) {
         if (cmds.count) [cmds removeLastObject];
+        else if (usual.count > 1) [usual removeLastObject];
+        else if (shelf.count > 2) [shelf removeLastObject];
         else if (files.count > 1) [files removeLastObject];
         else if (clips.count > 1) [clips removeLastObject];
         else if (context.count > 2) [context removeLastObject];
         else if (files.count) [files removeLastObject];
         else if (clips.count) [clips removeLastObject];
+        else if (usual.count) [usual removeLastObject];
+        else if (shelf.count > 1) [shelf removeLastObject];
+        else if (notes.count > 1) [notes removeLastObject];
         else break;
     }
     NSMutableArray *entries = [NSMutableArray new], *rows = [NSMutableArray new];
@@ -161,14 +189,19 @@
         [entries addObject:title]; [entries addObjectsFromArray:list]; [rows addObjectsFromArray:list];
     };
     section(@"Timers", timers);
+    section(@"Notes", notes);
+    section(@"Shelf", shelf);
     section(@"Selected Text", selection);
     section([@"In " stringByAppendingString:self.contextAppName ?: @"this app"], context);
+    section(@"Usually Now", usual);
     section(@"Clipboard", clips);
     section(@"Recent Files", files);
     section(@"Recent Commands", cmds);
     NSMutableArray *all = [NSMutableArray arrayWithArray:apps];
     [all addObjectsFromArray:quick]; [all addObjectsFromArray:rows];
     self.homeApps = (NSInteger)apps.count; self.homeQuick = (NSInteger)quick.count; self.homeEntries = entries;
+    double lead = 0; for (CItem *a in apps) lead = MAX(lead, a.path ? [self timelyScore:a.path] : 0);
+    self.gridTitle.attributedStringValue = sectionTitle(lead >= 2 ? @"Suggested Now" : @"Most Used");   // the row follows your habits once it knows them
     self.gridMode = all.count > 0;
     self.items = all; self.selected = 0;
     [self reloadTable];

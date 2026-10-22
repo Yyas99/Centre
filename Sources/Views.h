@@ -48,9 +48,14 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width);   // how many p
 @property (nonatomic, copy) NSImage *(^iconFor)(CItem *);
 @property (nonatomic, copy) void (^onPick)(NSInteger);
 @property (nonatomic, copy) void (^onHover)(NSInteger);
+@property (nonatomic, copy) void (^onDragOut)(NSInteger);   // a row with a dragObject was dropped somewhere
 @property (nonatomic, strong) NSTrackingArea *hoverArea;
 - (void)reload;
 - (CGFloat)fittingHeight;
+@end
+// One quiet line under the search field: time, timer, next event, battery, network.
+@interface CAmbient : NSView
+@property (nonatomic, copy) NSArray<NSArray<NSString *> *> *segments;   // @[symbol, text]; empty symbol = text only
 @end
 @interface CMediaView : NSView
 @property (nonatomic, strong) NSImageView *art;
@@ -62,6 +67,9 @@ NSInteger quickStripFit(NSArray<CItem *> *items, CGFloat width);   // how many p
 @property (nonatomic, strong) NSTrackingArea *hoverArea;
 @property (nonatomic, copy) void (^onCommand)(int);
 @property (nonatomic, copy) void (^onSeek)(double fraction);
+@property (nonatomic, strong) NSColor *accent;    // drawn from the album art (nil: the ice accent)
+@property (nonatomic, strong) NSButton *closeB;
+@property (nonatomic, copy) void (^onClose)(void); // the small × (Centre's panel only)
 - (void)setPlaying:(BOOL)p;
 - (void)setElapsed:(double)el duration:(double)d;
 @end

@@ -67,9 +67,21 @@
 }
 - (void)recordUse:(NSString *)key {
     if (!key.length) return;
-    NSDictionary *e = self.usage[key];
+    NSDictionary *e = [self.usage[key] isKindOfClass:[NSDictionary class]] ? self.usage[key] : @{};
     NSInteger n = [e[@"count"] integerValue] + 1;
-    self.usage[key] = @{@"count": @(n), @"last": @([NSDate date].timeIntervalSince1970)};
+    // Timed suggestions: when in the day you use it (24 hourly counts), and which app you were in.
+    NSMutableArray *h = [e[@"h"] isKindOfClass:[NSArray class]] && [e[@"h"] count] == 24 ? [e[@"h"] mutableCopy] : nil;
+    if (!h) { h = [NSMutableArray new]; for (int k = 0; k < 24; k++) [h addObject:@0]; }
+    NSInteger hr = [[NSCalendar currentCalendar] component:NSCalendarUnitHour fromDate:[NSDate date]];
+    h[hr] = @([h[hr] integerValue] + 1);
+    NSMutableDictionary *apps = [e[@"apps"] isKindOfClass:[NSDictionary class]] ? [e[@"apps"] mutableCopy] : [NSMutableDictionary new];
+    if (self.contextBundleID.length) {
+        apps[self.contextBundleID] = @([apps[self.contextBundleID] integerValue] + 1);
+        while (apps.count > 12) {                                  // keep the strongest dozen
+            NSString *weakest = [apps keysSortedByValueUsingSelector:@selector(compare:)].firstObject; [apps removeObjectForKey:weakest];
+        }
+    }
+    self.usage[key] = @{@"count": @(n), @"last": @([NSDate date].timeIntervalSince1970), @"h": h, @"apps": apps};
     NSData *d = [NSJSONSerialization dataWithJSONObject:self.usage options:0 error:nil];
     [d writeToFile:self.usagePath atomically:YES];
 }
@@ -233,15 +245,17 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     EventHotKeyID hk; hk.signature = 0; hk.id = 1;
     GetEventParameter(evt, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(hk), NULL, &hk);
     UInt32 which = hk.id;
-    if (which == 1) dispatch_async(dispatch_get_main_queue(), ^{ [app toggle]; });
+    BOOL up = GetEventKind(evt) == kEventHotKeyReleased;
+    if (which == 1) { dispatch_async(dispatch_get_main_queue(), ^{ if (up) [app hotKeyReleased]; else [app hotKeyPressed]; }); return noErr; }   // tap opens; hold peeks
+    if (up) return noErr;
     else if (which >= 100) dispatch_async(dispatch_get_main_queue(), ^{ [app runHotKeyCommand:which - 100]; });   // per-command shortcuts
     return noErr;
 }
 - (void)registerHotKey {
     static BOOL installed = NO;
     if (!installed) {
-        EventTypeSpec spec; spec.eventClass = kEventClassKeyboard; spec.eventKind = kEventHotKeyPressed;
-        InstallApplicationEventHandler(&hotKeyHandler, 1, &spec, (__bridge void *)self, NULL);
+        EventTypeSpec spec[2] = {{kEventClassKeyboard, kEventHotKeyPressed}, {kEventClassKeyboard, kEventHotKeyReleased}};
+        InstallApplicationEventHandler(&hotKeyHandler, 2, spec, (__bridge void *)self, NULL);
         installed = YES;
     }
     if (self.hotKeyRef) { UnregisterEventHotKey(self.hotKeyRef); self.hotKeyRef = NULL; }
@@ -324,6 +338,8 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     return [self.config[@"launchAtLogin"] boolValue];
 }
 - (void)setLaunchAtLogin:(BOOL)on {
+    NSMutableDictionary *c = [self mutableConfig];                     // your choice, kept apart from what macOS currently reports
+    if ([c[@"launchAtLogin"] boolValue] != on) { c[@"launchAtLogin"] = @(on); [self writeConfig:c]; }
     if (@available(macOS 13.0, *)) {
         NSError *e = nil;
         BOOL ok = on ? [SMAppService.mainAppService registerAndReturnError:&e] : [SMAppService.mainAppService unregisterAndReturnError:&e];
@@ -444,10 +460,17 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.y.centre.show" object:nil queue:[NSOperationQueue mainQueue]
         usingBlock:^(NSNotification *note) { [self show]; }];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    NSApp.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];   // obsidian glass everywhere: panel, Settings, taskbar, menus
     self.iconCache = [NSMutableDictionary new]; self.clips = [NSMutableArray new]; self.items = @[];
     [self loadClipHandoff];
     self.pbCount = [NSPasteboard generalPasteboard].changeCount;
     [self loadUsage]; [self loadConfig];
+    // A self-rebuild replaces and re-signs the app, and macOS can drop it from Login Items. Your choice is kept in
+    // config, so every start puts it back quietly (older configs: adopt what macOS has now).
+    if (@available(macOS 13.0, *)) {
+        if (!self.config[@"launchAtLogin"]) { if ([self launchesAtLogin]) { NSMutableDictionary *c = [self mutableConfig]; c[@"launchAtLogin"] = @YES; [self writeConfig:c]; } }
+        else if ([self.config[@"launchAtLogin"] boolValue] && ![self launchesAtLogin]) [SMAppService.mainAppService registerAndReturnError:nil];
+    }
     [self buildUI];
     [self startMediaObservers];
     [self registerHotKey];
@@ -457,6 +480,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     self.taskbar = [[CTaskbar alloc] initWithApp:self];
     [self.taskbar apply];
     [self startRecentFilesQuery];
+    [self loadShelf]; [self startShelfWatch]; [self startPreviewWatch];
     [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(pollClipboard) userInfo:nil repeats:YES];
     // Auto-rebuild: when anything in Sources/ changes, recompile and relaunch (only while the panel is hidden).
     [NSTimer scheduledTimerWithTimeInterval:4 repeats:YES block:^(NSTimer *t) {
@@ -470,7 +494,11 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     NSDate *built = [[[NSFileManager defaultManager] attributesOfItemAtPath:[NSBundle mainBundle].executablePath error:nil] fileModificationDate];
     NSAppleEventDescriptor *ev = [NSAppleEventManager sharedAppleEventManager].currentAppleEvent;
     BOOL atLogin = [ev paramDescriptorForKeyword:keyAEPropData].enumCodeValue == keyAELaunchedAsLogInItem;
-    if (!atLogin && (!built || -[built timeIntervalSinceNow] > 90)) [self show];     // "starts quietly in the background"
+    // Centre never opens its panel by itself: only your shortcut does. (Login items started by macOS 13+ carry no
+    // "launched at login" marker, so the old check opened the panel after every restart.) Opening it by hand from
+    // Finder, minutes after startup, just says where it is.
+    BOOL manual = !atLogin && [NSProcessInfo processInfo].systemUptime > 180 && (!built || -[built timeIntervalSinceNow] > 90);
+    if (manual) showHUD([NSString stringWithFormat:@"Centre is ready · %@", prettyHotkey([self.config[@"hotkey"] isKindOfClass:[NSString class]] ? self.config[@"hotkey"] : @"cmd+space")], @"command");
 }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)a hasVisibleWindows:(BOOL)f { [self show]; return NO; }
 - (void)applicationWillTerminate:(NSNotification *)n {
