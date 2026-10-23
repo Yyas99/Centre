@@ -234,6 +234,10 @@
     [self refreshWindowList];
     if (self.readmeMode) {   // neutral sample data so public screenshots show nothing personal
         self.notes = [NSMutableArray new]; self.shelf = [NSMutableArray new]; self.timers = nil;   // never your own notes or shelf
+        NSMutableDictionary *neutral = [self.config mutableCopy] ?: [NSMutableDictionary new];   // default pins and switches, in memory only
+        for (NSString *k in @[@"pinned", @"hotkey", @"taskbarLabels", @"taskbarGroup", @"taskbarAutoHide", @"taskbarSize", @"taskbarPosition", @"taskbarDock"]) [neutral removeObjectForKey:k];
+        neutral[@"taskbarEnabled"] = @YES; neutral[@"taskbarFloating"] = @YES; neutral[@"ambientLine"] = @YES;
+        self.config = neutral;
         [self.clips addObjectsFromArray:@[@"brew install --cask iina", @"Meeting moved to 3:30 pm, room 4.12",
                                           @"https://developer.apple.com/design/human-interface-guidelines", @"git commit -m \"Tighten launcher spacing\""]];
         NSString *docs = [NSHomeDirectory() stringByAppendingPathComponent:@"Documents"];

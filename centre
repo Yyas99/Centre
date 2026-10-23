@@ -164,7 +164,13 @@ case "$1" in
   test) limited 20 "$BIN" --selftest; exit $? ;;
   shots) rm -rf "$AGENT/shots"; limited 90 "$BIN" --readme "$AGENT/shots" >/dev/null 2>&1 || true
          n=$(ls "$AGENT/shots"/*.png 2>/dev/null | wc -l | tr -d ' ')
-         if [ "$n" -gt 0 ]; then cp -f "$AGENT/shots"/*.png "$DIR/docs/"; echo "Rendered $n screenshots into docs/"; else echo "No screenshots rendered"; exit 1; fi
+         [ "$n" -gt 0 ] || { echo "No screenshots rendered"; exit 1; }
+         # Keep docs/ to exactly what the README shows (plus the icon and the disk image background).
+         used=0
+         for f in "$AGENT/shots"/*.png; do b=$(basename "$f"); grep -q "docs/$b" "$DIR/README.md" && { cp -f "$f" "$DIR/docs/"; used=$((used+1)); }; done
+         for f in "$DIR/docs"/*.png; do b=$(basename "$f"); case "$b" in icon.png|dmg-background*) continue ;; esac
+           grep -q "docs/$b" "$DIR/README.md" || rm -f "$f"; done
+         echo "Rendered $n screenshots; $used are on the README page"
          exit 0 ;;
   snap) rm -rf "$AGENT/snaps"; limited 120 "$BIN" --snapshot "$AGENT/snaps" >/dev/null 2>&1 || true
         echo "$(ls "$AGENT/snaps" 2>/dev/null | wc -l | tr -d ' ') snapshots in .agent/snaps"; exit 0 ;;
