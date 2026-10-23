@@ -58,7 +58,7 @@ No accounts or analytics. Centre goes online only to check GitHub for updates, f
 
 ## Build from source
 
-You need macOS 13 or later and the Command Line Tools (`xcode-select --install`). Run `bash setup-signing.sh` once, then `./centre` to build and run. To make a release, bump `VERSION` and run `./centre release`, which writes the `.dmg` and the update `.zip` to `dist/`.
+You need macOS 13 or later and the Command Line Tools (`xcode-select --install`). Run `bash setup-signing.sh` once, then `./centre` to build and run. To make a release, bump `VERSION`, write `NOTES` and run `./centre release`, which writes the `.dmg` and the update `.zip` to `dist/`.
 
 ## Credits
 

@@ -176,6 +176,7 @@ case "$1" in
       echo "--- $a"; codesign -dv "$a" 2>&1 | grep -E 'Authority|Identifier='; codesign --verify --strict "$a" 2>&1 && echo "signature valid"
     done
     echo "--- last build"; tail -3 "$DIR/build.log" 2>/dev/null
+    echo "--- gh"; for g in gh /opt/homebrew/bin/gh /usr/local/bin/gh; do command -v $g >/dev/null 2>&1 && { $g --version | head -1; $g auth status 2>&1 | head -3; break; }; done
     exit 0 ;;
   release)
     OUT="$DIR/dist"; rm -rf "$OUT"; mkdir -p "$OUT"
@@ -221,6 +222,16 @@ OSA
     codesign -s "$(security find-identity -v -p codesigning 2>/dev/null | awk -v n="\"$SIGN_NAME\"" 'index($0, n) {print $2; exit}')" --timestamp=none "$OUT/Centre-$VERSION.dmg" >/dev/null 2>&1 || true
     (cd "$OUT" && shasum -a 256 Centre-* > SHA256.txt)
     echo "Release $VERSION (build $(defaults read "$APP/Contents/Info" CFBundleVersion 2>/dev/null)) ready in dist/:"; ls -lh "$OUT" | awk 'NR>1 {print "  " $NF "  " $5}'
+    # Publish: with the GitHub CLI signed in, straight away; otherwise open a pre-filled release page and the files.
+    GH=$(command -v gh || ls /opt/homebrew/bin/gh /usr/local/bin/gh 2>/dev/null | head -1 || true)
+    if [ -n "$GH" ] && "$GH" auth status >/dev/null 2>&1; then
+      "$GH" release create "v$VERSION" "$OUT/Centre-$VERSION.dmg" "$OUT/Centre-$VERSION.zip" -R Yyas99/Centre --title "Centre $VERSION" --notes-file "$DIR/NOTES" 2>&1 || true
+    elif [ -z "$CENTRE_NO_OPEN" ]; then
+      NOTES_Q=$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(open(sys.argv[1]).read()))' "$DIR/NOTES" 2>/dev/null || echo "")
+      open "https://github.com/Yyas99/Centre/releases/new?tag=v$VERSION&title=Centre%20$VERSION&body=$NOTES_Q"
+      open -R "$OUT/Centre-$VERSION.dmg"
+      echo "Opened the GitHub release page and dist/: drag in both files, then Publish."
+    fi
     exit 0 ;;
   install)
     quit_centre

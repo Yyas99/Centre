@@ -1,0 +1,6 @@
+The first packaged release.
+
+- Install from the DMG: drag Centre into Applications.
+- Centre now checks for updates itself (Settings › General › Updates) and installs them in place, keeping your permissions.
+- Settings simplified to eight pages, with a new menu bar icon.
+- Uninstall from Settings › System.
