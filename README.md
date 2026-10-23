@@ -48,15 +48,17 @@
 
 ## Install
 
-Needs macOS 13 or later and the Command Line Tools (`xcode-select --install`).
+1. Download **Centre-x.y.z.dmg** from [Releases](https://github.com/Yyas99/Centre/releases/latest), open it and drag Centre into Applications.
+2. The first time, macOS says it can't check Centre for malware, because it isn't notarised by Apple. Open **System Settings › Privacy & Security** and click **Open Anyway**.
+3. Turn off Spotlight's `⌘ Space` shortcut (System Settings › Keyboard › Keyboard Shortcuts › Spotlight), or choose another one in Centre.
 
-1. Run `bash setup-signing.sh` once. It creates a private signing certificate so macOS keeps Centre's permissions across updates.
-2. Run `./centre install`. It builds, self-tests (66 checks), signs and installs Centre in `/Applications`.
-3. Turn off Spotlight's `⌘ Space` (System Settings › Keyboard › Keyboard Shortcuts › Spotlight), or pick another shortcut in Centre's settings.
+Centre checks for updates itself. **Settings › General › Updates** installs a new version in place, and only if it's signed by the same certificate, so your permissions carry over. To remove Centre, use **Settings › System › Uninstall**. Settings are kept in `~/Library/Application Support/Centre`.
 
-Run `./centre install` again to update. To remove Centre, use **Settings › System › Uninstall**: it restores your Dock and removes the login item. Settings live in `~/Library/Application Support/Centre`.
+No accounts or analytics. Centre goes online only to check GitHub for updates, fetch YouTube Music artwork, and look up your public IP when you run `info`. Clipboard history stays in memory.
 
-No accounts or analytics. Centre only goes online to fetch YouTube Music artwork and, when you run `info`, your public IP. Clipboard history stays in memory.
+## Build from source
+
+You need macOS 13 or later and the Command Line Tools (`xcode-select --install`). Run `bash setup-signing.sh` once, then `./centre` to build and run. To make a release, bump `VERSION` and run `./centre release`, which writes the `.dmg` and the update `.zip` to `dist/`.
 
 ## Credits
 

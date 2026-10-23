@@ -309,6 +309,9 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [m addItemWithTitle:[NSString stringWithFormat:@"Open Centre  (%@)", hk] action:@selector(show) keyEquivalent:@""].target = self;
     [m addItem:[NSMenuItem separatorItem]];
     [m addItemWithTitle:@"Settings…" action:@selector(openSettings) keyEquivalent:@","].target = self;
+    if (![self isDevelopmentCopy])
+        [m addItemWithTitle:self.update ? [NSString stringWithFormat:@"Install Centre %@", self.update[@"version"]] : @"Check for Updates…"
+                     action:@selector(installUpdate) keyEquivalent:@""].target = self;
     if (!AXIsProcessTrusted()) [m addItemWithTitle:@"Allow Accessibility…" action:@selector(grantAX) keyEquivalent:@""].target = self;
     [m addItem:[NSMenuItem separatorItem]];
     [m addItemWithTitle:@"Quit Centre" action:@selector(terminate:) keyEquivalent:@""].target = NSApp;
@@ -515,6 +518,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     if (self.panel) return;
     [self installedBuildIsNewer];                 // remember which build this process is
     [self trace:@"running"];
+    [self startUpdateChecks];
     // A plain "kill" (an install or update quitting Centre) still quits properly, so the Dock is put back.
     signal(SIGTERM, SIG_IGN);
     static dispatch_source_t termSource;

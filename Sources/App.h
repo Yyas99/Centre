@@ -99,6 +99,9 @@
 @property (nonatomic, strong) NSArray<NSDictionary *> *browserTabs;
 @property (nonatomic) BOOL tabsBusy;
 @property (nonatomic, strong) NSMutableArray<NSDictionary *> *notes;
+@property (nonatomic, copy) NSDictionary *update;               // newest release: version, zip, notes, page (nil until checked)
+@property (nonatomic, copy) NSString *updateState;              // "", "checking", "downloading", "installing" or an error
+@property (nonatomic, strong) NSDate *updateCheckedAt;
 @property (nonatomic, strong) CAmbient *ambient;                    // the panel's top edge, fixed once it opens (0: not placed yet)
 - (NSString *)configPath;
 - (void)loadConfig;
@@ -139,6 +142,7 @@
 - (void)startNormally;
 - (NSString *)handoffPath;
 - (void)saveClipHandoff;
+- (void)trace:(NSString *)what;
 - (void)loadClipHandoff;
 - (void)applicationDidFinishLaunching:(NSNotification *)n;
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)a hasVisibleWindows:(BOOL)f;
@@ -301,4 +305,13 @@
 - (void)readmeShots;
 - (void)snapshotAll;
 - (void)runSnapshots;
+@end
+
+extern NSString *const CentreUpdateChanged;   // posted when the update state changes
+
+@interface CApp (Update)
+- (void)startUpdateChecks;
+- (void)checkForUpdates:(BOOL)byUser;
+- (void)installUpdate;
+- (NSString *)updateSummary;     // one line for Settings and the menu
 @end

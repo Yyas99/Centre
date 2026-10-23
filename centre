@@ -3,6 +3,7 @@
 #
 #   ./centre            build if Sources/ changed, then open Centre
 #   ./centre build      force a rebuild (the build is signed and self-tested before it replaces the old one)
+#   ./centre release    build Centre-<VERSION>.dmg (to install) and .zip (for in-app updates) into dist/
 #   ./centre install    build, then install into /Applications and open it there
 #   ./centre restart    relaunch now      ./centre stop      quit
 #   ./centre test       self-test         ./centre status    build, signature and install details
@@ -21,7 +22,7 @@ AGENT="$DIR/.agent"
 TRACE="$HOME/Library/Logs/Centre/trace.log"
 APPRE='Centre\.app/Contents/MacOS/Centre$'   # the app itself; agent, self-test and render runs carry arguments
 SIGN_NAME="Centre Local Signing"
-VERSION="1.0"
+VERSION="$(tr -d ' \n' < "$DIR/VERSION" 2>/dev/null || echo 1.0.0)"   # bump this file to release
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 mkdir -p "$AGENT/inbox" "$AGENT/out"
 
@@ -87,7 +88,9 @@ for i in $(seq 1 900); do
 done
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
-if [ "$1" = "build" ] || stale; then
+# A release must carry the version in VERSION, so a mismatch forces a fresh build.
+built_version() { defaults read "$APP/Contents/Info" CFBundleShortVersionString 2>/dev/null; }
+if [ "$1" = "build" ] || stale || { [ "$1" = "release" ] && [ "$(built_version)" != "$VERSION" ]; }; then
   # Signing identity first: a build without it would get a new identity and lose every permission.
   SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | awk -v n="\"$SIGN_NAME\"" 'index($0, n) {print $2; exit}')
   if [ -z "$SIGN_ID" ]; then
@@ -173,6 +176,51 @@ case "$1" in
       echo "--- $a"; codesign -dv "$a" 2>&1 | grep -E 'Authority|Identifier='; codesign --verify --strict "$a" 2>&1 && echo "signature valid"
     done
     echo "--- last build"; tail -3 "$DIR/build.log" 2>/dev/null
+    exit 0 ;;
+  release)
+    OUT="$DIR/dist"; rm -rf "$OUT"; mkdir -p "$OUT"
+    ditto -c -k --keepParent "$APP" "$OUT/Centre-$VERSION.zip"          # what the in-app updater downloads
+    S="$AGENT/dmg"; RW="$AGENT/rw.dmg"; rm -rf "$S" "$RW"; mkdir -p "$S/.background"
+    ditto "$APP" "$S/Centre.app"; ln -s /Applications "$S/Applications"
+    if [ -f "$DIR/docs/dmg-background@2x.png" ] && command -v tiffutil >/dev/null; then
+      tiffutil -cathidpicheck "$DIR/docs/dmg-background.png" "$DIR/docs/dmg-background@2x.png" -out "$S/.background/bg.tiff" >/dev/null 2>&1 || true
+    fi
+    hdiutil detach "/Volumes/Centre" -force >/dev/null 2>&1 || true
+    hdiutil create -volname Centre -srcfolder "$S" -fs HFS+ -format UDRW -ov "$RW" >/dev/null
+    MNT=$(hdiutil attach -readwrite -noverify -noautoopen "$RW" | awk -F'\t' '/\/Volumes\//{print $NF; exit}')
+    # Finder window layout: icon view, the app on the left, Applications on the right, the arrow behind them.
+    cat > "$AGENT/layout.applescript" <<'OSA'
+tell application "Finder"
+  tell disk "Centre"
+    open
+    set current view of container window to icon view
+    set toolbar visible of container window to false
+    set statusbar visible of container window to false
+    set the bounds of container window to {200, 120, 840, 548}
+    set opts to the icon view options of container window
+    set arrangement of opts to not arranged
+    set icon size of opts to 112
+    set text size of opts to 13
+    try
+      set background picture of opts to file ".background:bg.tiff"
+    end try
+    set position of item "Centre.app" of container window to {170, 190}
+    set position of item "Applications" of container window to {470, 190}
+    close
+    open
+    delay 1
+    close
+  end tell
+end tell
+OSA
+    limited 25 osascript "$AGENT/layout.applescript" >/dev/null 2>&1 || echo "Window layout skipped (Finder didn't answer); the disk image still works"
+    rm -f "$AGENT/layout.applescript"
+    sync; hdiutil detach "$MNT" >/dev/null 2>&1 || hdiutil detach "$MNT" -force >/dev/null
+    hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$OUT/Centre-$VERSION.dmg" >/dev/null
+    rm -rf "$S" "$RW"
+    codesign -s "$(security find-identity -v -p codesigning 2>/dev/null | awk -v n="\"$SIGN_NAME\"" 'index($0, n) {print $2; exit}')" --timestamp=none "$OUT/Centre-$VERSION.dmg" >/dev/null 2>&1 || true
+    (cd "$OUT" && shasum -a 256 Centre-* > SHA256.txt)
+    echo "Release $VERSION (build $(defaults read "$APP/Contents/Info" CFBundleVersion 2>/dev/null)) ready in dist/:"; ls -lh "$OUT" | awk 'NR>1 {print "  " $NF "  " $5}'
     exit 0 ;;
   install)
     quit_centre

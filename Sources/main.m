@@ -13,7 +13,7 @@ static int runAgent(NSString *dir) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *inbox = [dir stringByAppendingPathComponent:@".agent/inbox"], *outDir = [dir stringByAppendingPathComponent:@".agent/out"];
     [fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSSet *allowed = [NSSet setWithArray:@[@"build", @"restart", @"stop", @"test", @"shots", @"snap", @"status", @"log", @"crash", @"trace", @"install"]];
+    NSSet *allowed = [NSSet setWithArray:@[@"build", @"restart", @"stop", @"test", @"shots", @"snap", @"status", @"log", @"crash", @"trace", @"install", @"release"]];
     setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin", 1);
     setenv("CENTRE_AGENT", "1", 1);
     for (int round = 0; round < 100; round++) {

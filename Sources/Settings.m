@@ -320,7 +320,13 @@ static NSArray *searchEngines(void) {
 @implementation CSettings
 
 - (instancetype)initWithApp:(CApp *)app {
-    if ((self = [super init])) { _app = app; _tables = [NSMutableDictionary new]; [self loadModel]; [self buildWindow]; }
+    if ((self = [super init])) {
+        _app = app; _tables = [NSMutableDictionary new]; [self loadModel]; [self buildWindow];
+        __weak CSettings *ws = self;     // the Updates row follows checks and downloads as they happen
+        [[NSNotificationCenter defaultCenter] addObserverForName:CentreUpdateChanged object:nil queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) {
+            if (ws.window.visible && ws.page == pageIndex(@"General")) [ws showPage:ws.page];
+        }];
+    }
     return self;
 }
 
@@ -536,6 +542,18 @@ static NSArray *searchEngines(void) {
                             setRow(@"Calendar in the glance", nil, [self switchFor:@"peekCalendar" fallback:YES]),
                             setRow(@"Shelf", @"Drop anything at the top of the screen while dragging.", [self switchFor:@"shelfDropZone" fallback:YES])])];
     [self gap];
+
+    // Updates: the installed copy checks GitHub Releases; the development copy updates from its source.
+    if (![self.app isDevelopmentCopy]) {
+        NSString *st = self.app.updateState ?: @"";
+        BOOL busy = [st isEqualToString:@"checking"] || [st isEqualToString:@"downloading"] || [st isEqualToString:@"installing"];
+        NSButton *ub = [self button:self.app.update ? @"Install" : @"Check Now" target:self.app action:@selector(installUpdate)];
+        ub.enabled = !busy;
+        [self addHeader:@"Updates" note:nil];
+        [self addFull:setCard(@[setRow(@"Centre", [self.app updateSummary], ub),
+                                setRow(@"Check automatically", nil, [self switchFor:@"autoUpdateCheck" fallback:YES])])];
+        [self gap];
+    }
 
     // Browser details only matter once YouTube Music control is on.
     NSString *browser = [self.app ytmBrowser];
