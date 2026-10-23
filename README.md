@@ -46,11 +46,17 @@
 | `> cmd` · `pw 24` · `5 km to mi` · `timer 10m` | Shell · password · units · timer |
 | `save session Study` · `Study` | Save and restore window layouts |
 
-## Build
+## Install
 
-Needs only the Command Line Tools (`xcode-select --install`). Run `./centre`, or double-click **Rebuild Centre.command**. Centre rebuilds itself when `Sources/` changes, and only installs a build that passes its self-test (66 checks). Settings live in `~/Library/Application Support/Centre/config.json`.
+Needs macOS 13 or later and the Command Line Tools (`xcode-select --install`).
 
-Turn off Spotlight's `⌘ Space` first, or pick another shortcut in Settings.
+1. Run `bash setup-signing.sh` once. It creates a private signing certificate so macOS keeps Centre's permissions across updates.
+2. Run `./centre install`. It builds, self-tests (66 checks), signs and installs Centre in `/Applications`.
+3. Turn off Spotlight's `⌘ Space` (System Settings › Keyboard › Keyboard Shortcuts › Spotlight), or pick another shortcut in Centre's settings.
+
+Run `./centre install` again to update. To remove Centre, use **Settings › System › Uninstall**: it restores your Dock and removes the login item. Settings live in `~/Library/Application Support/Centre`.
+
+No accounts or analytics. Centre only goes online to fetch YouTube Music artwork and, when you run `info`, your public IP. Clipboard history stays in memory.
 
 ## Credits
 

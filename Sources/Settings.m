@@ -59,7 +59,27 @@ static NSImage *tintedImage(NSImage *img, NSColor *c) {
         [img drawInRect:r]; [c set]; NSRectFillUsingOperation(r, NSCompositingOperationSourceAtop); return YES; }];
 }
 
-// Sidebar item: colour tile + label. Ice-tinted pill when selected, a faint one under the pointer.
+// Obsidian glyph well: a quiet glass square with a white glyph; ice when it's the page you're on.
+static void drawGlyphWell(NSRect r, NSString *symbol, BOOL on, NSView *v) {
+    CGFloat rad = round(r.size.width * 0.28);
+    NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(r, 0.5, 0.5) xRadius:rad yRadius:rad];
+    [[NSColor colorWithWhite:1 alpha:on ? 0.10 : 0.055] setFill]; [p fill];
+    p.lineWidth = 1; [(on ? [cAccent() colorWithAlphaComponent:0.45] : [NSColor colorWithWhite:1 alpha:0.08]) setStroke]; [p stroke];
+    NSImage *g = tintedSymbol(symbol, round(r.size.width * 0.42), on ? cAccent() : [NSColor colorWithWhite:1 alpha:0.78]);
+    if (!g) return;
+    NSSize gs = g.size;
+    [g drawInRect:NSMakeRect(round(NSMidX(r) - gs.width / 2), round(NSMidY(r) - gs.height / 2), gs.width, gs.height)
+         fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+}
+@interface CGlyphWell : NSView
+@property (nonatomic, copy) NSString *symbol;
+@end
+@implementation CGlyphWell
+- (BOOL)isFlipped { return YES; }
+- (void)drawRect:(NSRect)r { drawGlyphWell(self.bounds, self.symbol, NO, self); }
+@end
+
+// Sidebar item: glyph well + label. Ice-tinted pill when selected, a faint one under the pointer.
 @interface CNavItem : NSView
 @property (nonatomic, copy) NSString *title, *symbol, *kind;
 @property (nonatomic) BOOL selected, hover;
@@ -74,14 +94,18 @@ static NSImage *tintedImage(NSImage *img, NSColor *c) {
         [(self.selected ? cSelFill(self) : [[NSColor labelColor] colorWithAlphaComponent:0.045]) setFill]; [p fill];
         if (self.selected) { p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(b, 0.5, 0.5) xRadius:7.5 yRadius:7.5]; p.lineWidth = 1; [cSelEdge(self) setStroke]; [p stroke]; }
     }
-    NSRect tile = NSMakeRect(8, floor((b.size.height - 22) / 2), 22, 22);
-    [tileImage(self.symbol, self.kind) drawInRect:tile fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    drawGlyphWell(NSMakeRect(8, floor((b.size.height - 22) / 2), 22, 22), self.symbol, self.selected, self);
     NSDictionary *at = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:self.selected ? NSFontWeightSemibold : NSFontWeightRegular],
                          NSForegroundColorAttributeName: self.selected ? [NSColor labelColor] : [[NSColor labelColor] colorWithAlphaComponent:0.85]};
     NSSize ts = [self.title sizeWithAttributes:at];
     [self.title drawAtPoint:NSMakePoint(40, floor((b.size.height - ts.height) / 2)) withAttributes:at];
 }
 - (void)mouseDown:(NSEvent *)e { if (self.onClick) self.onClick(); }
+- (BOOL)isAccessibilityElement { return YES; }
+- (NSAccessibilityRole)accessibilityRole { return NSAccessibilityButtonRole; }
+- (NSString *)accessibilityLabel { return self.title; }
+- (BOOL)isAccessibilitySelected { return self.selected; }
+- (BOOL)accessibilityPerformPress { if (self.onClick) self.onClick(); return YES; }
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
     for (NSTrackingArea *t in self.trackingAreas) [self removeTrackingArea:t];
@@ -200,7 +224,7 @@ static CSetRow *setRow(NSString *title, NSString *sub, NSView *control) {
     texts.translatesAutoresizingMaskIntoConstraints = NO;
     [texts setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     [r addSubview:texts];
-    NSMutableArray *cs = [@[[r.heightAnchor constraintEqualToConstant:sub.length ? 58 : 46],
+    NSMutableArray *cs = [@[[r.heightAnchor constraintEqualToConstant:sub.length ? 52 : 42],
                             [texts.leadingAnchor constraintEqualToAnchor:r.leadingAnchor constant:16],
                             [texts.centerYAnchor constraintEqualToAnchor:r.centerYAnchor]] mutableCopy];
     if (control) {
@@ -264,18 +288,18 @@ static NSTextField *setField(NSString *value, NSString *placeholder, CGFloat wid
 
 // name, symbol, tile colour, one-line purpose, sidebar group (shown before the first page of each group)
 static NSArray *settingsPages(void) {
-    return @[@[@"General", @"gearshape.fill", @"System", @"Your shortcut, startup and what Centre remembers.", @""],
-             @[@"Home", @"house.fill", @"Clipboard", @"What you see the moment Centre opens.", @""],
-             @[@"Taskbar", @"dock.rectangle", @"Context", @"A floating bar for your apps, tray and clock.", @""],
-             @[@"Search", @"magnifyingglass", @"Web", @"Where searches go when nothing on your Mac matches.", @""],
-             @[@"Commands", @"terminal.fill", @"Script", @"Scripts and flows that run like built-in commands.", @"Make It Yours"],
-             @[@"Snippets", @"text.quote", @"Snippet", @"Text you paste anywhere in a keystroke.", @""],
-             @[@"Shortcuts", @"command", @"Media", @"Global keys for anything Centre can run.", @""],
-             @[@"Quick Links", @"link", @"Link", @"Websites you open by name.", @""],
-             @[@"Permissions", @"hand.raised.fill", @"Window", @"What Centre can access, and how to fix what's missing.", @"System"],
-             @[@"Advanced", @"wrench.and.screwdriver.fill", @"Centre", @"App folders, the config file and maintenance.", @""]];
+    return @[@[@"General", @"gearshape", @"", @"Shortcut, startup and what Centre shows.", @""],
+             @[@"Home", @"house", @"", @"What you see the moment Centre opens.", @""],
+             @[@"Search", @"magnifyingglass", @"", @"The web, keywords and quick links.", @""],
+             @[@"Taskbar", @"dock.rectangle", @"", @"Apps, tray and the Dock.", @""],
+             @[@"Commands", @"terminal", @"", @"Scripts and flows that run like built-in commands.", @"Make It Yours"],
+             @[@"Snippets", @"text.quote", @"", @"Text you paste in a keystroke.", @""],
+             @[@"Shortcuts", @"command", @"", @"Global keys for anything Centre runs.", @""],
+             @[@"System", @"lock.shield", @"", @"Permissions and maintenance.", @"Mac"]];
 }
 static NSInteger pageIndex(NSString *name) {
+    if ([name isEqualToString:@"Quick Links"]) name = @"Search";                          // pages that were merged
+    if ([name isEqualToString:@"Permissions"] || [name isEqualToString:@"Advanced"]) name = @"System";
     NSArray *p = settingsPages();
     for (NSUInteger i = 0; i < p.count; i++) if ([p[i][0] isEqualToString:name]) return (NSInteger)i;
     return 0;
@@ -331,8 +355,7 @@ static NSArray *searchEngines(void) {
 
     NSImageView *icon = [NSImageView imageViewWithImage:[NSApp applicationIconImage]];
     icon.frame = NSMakeRect(16, 46, 38, 38); icon.imageScaling = NSImageScaleProportionallyUpOrDown; [sc addSubview:icon];
-    NSTextField *name = setLabel(@"Centre", 15, NSFontWeightSemibold, nil); name.frame = NSMakeRect(62, 48, 150, 19); [sc addSubview:name];
-    NSTextField *ver = setLabel([@"Version " stringByAppendingString:[NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"2.0"], 11, NSFontWeightRegular, [NSColor tertiaryLabelColor]); ver.frame = NSMakeRect(62, 67, 150, 14); [sc addSubview:ver];
+    NSTextField *name = setLabel(@"Centre", 15, NSFontWeightSemibold, nil); name.frame = NSMakeRect(62, 56, 150, 19); [sc addSubview:name];
 
     NSMutableArray *items = [NSMutableArray new];
     NSArray *pages = settingsPages();
@@ -405,26 +428,20 @@ static NSArray *searchEngines(void) {
                                               [st.bottomAnchor constraintEqualToAnchor:self.doc.bottomAnchor]]];
     self.pageStack = st;
     NSArray *pg = settingsPages()[i];
-    NSImageView *tile = [NSImageView imageViewWithImage:tileImage(pg[1], pg[2])];
-    tile.imageScaling = NSImageScaleProportionallyUpOrDown;
-    [tile.widthAnchor constraintEqualToConstant:40].active = YES; [tile.heightAnchor constraintEqualToConstant:40].active = YES;
-    NSTextField *title = setLabel(pg[0], 24, NSFontWeightBold, nil);
-    NSTextField *purpose = setLabel(pg[3], 12.5, NSFontWeightRegular, [NSColor secondaryLabelColor]);
-    NSStackView *words = [NSStackView stackViewWithViews:@[title, purpose]];
-    words.orientation = NSUserInterfaceLayoutOrientationVertical; words.alignment = NSLayoutAttributeLeading; words.spacing = 1;
-    NSStackView *head = [NSStackView stackViewWithViews:@[tile, words]]; head.spacing = 14; head.alignment = NSLayoutAttributeCenterY;
-    [st addArrangedSubview:head]; [st setCustomSpacing:30 afterView:head];
+    NSTextField *title = setLabel(pg[0], 22, NSFontWeightSemibold, nil);
+    NSTextField *purpose = setLabel(pg[3], 12.5, NSFontWeightRegular, [NSColor tertiaryLabelColor]);
+    NSStackView *head = [NSStackView stackViewWithViews:@[title, purpose]];
+    head.orientation = NSUserInterfaceLayoutOrientationVertical; head.alignment = NSLayoutAttributeLeading; head.spacing = 3;
+    [st addArrangedSubview:head]; [st setCustomSpacing:28 afterView:head];
     NSString *name = settingsPages()[i][0];
     if ([name isEqualToString:@"General"]) [self buildGeneral];
     else if ([name isEqualToString:@"Home"]) [self buildHomePage];
     else if ([name isEqualToString:@"Taskbar"]) [self buildTaskbar];
-    else if ([name isEqualToString:@"Search"]) [self buildSearch];
+    else if ([name isEqualToString:@"Search"]) { [self buildSearch]; [self gap]; [self buildLinks]; }
     else if ([name isEqualToString:@"Commands"]) [self buildCommands];
     else if ([name isEqualToString:@"Snippets"]) [self buildSnippets];
     else if ([name isEqualToString:@"Shortcuts"]) [self buildShortcuts];
-    else if ([name isEqualToString:@"Quick Links"]) [self buildLinks];
-    else if ([name isEqualToString:@"Permissions"]) [self buildPermissions];
-    else [self buildAdvanced];
+    else { [self buildPermissions]; [self gap]; [self buildAdvanced]; }
     [self.doc layoutSubtreeIfNeeded];
     [self.doc scrollPoint:keep];
     if (self.focusID) {                                   // a just-added command or snippet: put the cursor in its name
@@ -472,6 +489,14 @@ static NSArray *searchEngines(void) {
     s.identifier = key; s.target = self; s.action = @selector(switchChanged:);
     return s;
 }
+// A switch that reads the opposite way to its config key ("one per window" is taskbarGroup = NO).
+- (NSSwitch *)invertedSwitchFor:(NSString *)key fallback:(BOOL)def {
+    NSSwitch *s = [self switchFor:key fallback:def];
+    s.state = s.state == NSControlStateValueOn ? NSControlStateValueOff : NSControlStateValueOn;
+    s.action = @selector(invertedSwitchChanged:);
+    return s;
+}
+- (void)invertedSwitchChanged:(NSSwitch *)s { [self saveKey:s.identifier value:@(s.state != NSControlStateValueOn)]; }
 - (NSButton *)button:(NSString *)t target:(id)target action:(SEL)a {
     NSButton *b = [NSButton buttonWithTitle:t target:target action:a]; b.bezelStyle = NSBezelStyleRounded; return b;
 }
@@ -495,44 +520,41 @@ static NSArray *searchEngines(void) {
     login.action = @selector(loginChanged:);
 
     [self addHeader:@"Launcher" note:nil];
-    [self addFull:setCard(@[setRow(@"Keyboard shortcut", self.app.hotkeyFailed ? @"⚠︎ Taken by another app — click and press a different combination."
-                                                                               : @"Click, then press the new combination.", hk),
-                            setRow(@"Launch at login", @"Starts quietly in the background.", login),
-                            setRow(@"Show in menu bar", @"Adds the Centre icon to the menu bar.", [self switchFor:@"showMenuBarIcon" fallback:NO])])];
+    [self addFull:setCard(@[setRow(@"Shortcut", self.app.hotkeyFailed ? @"Taken by another app. Click to choose another." : @"Tap to open. Hold for a glance.", hk),
+                            setRow(@"Launch at login", nil, login),
+                            setRow(@"Menu bar icon", nil, [self switchFor:@"showMenuBarIcon" fallback:NO])])];
     [self gap];
 
 
-    [self addHeader:@"Behaviour" note:nil];
-    [self addFull:setCard(@[setRow(@"Clipboard history", @"Last 100 copied texts, memory only. Type clip.", [self switchFor:@"clipboardHistory" fallback:YES]),
-                            setRow(@"File results", @"Include Spotlight file matches in search.", [self switchFor:@"fileResults" fallback:YES]),
-                            setRow(@"Preview", @"Rest on a file or clipboard entry to see it beside the panel.", [self switchFor:@"previewFiles" fallback:YES]),
-                            setRow(@"Open tabs", @"Search your browser tabs by title or address; ↩ jumps to the tab.", [self switchFor:@"tabSearch" fallback:YES]),
-                            setRow(@"Status line", @"Time, timer, next event, battery and network under the search field.", [self switchFor:@"ambientLine" fallback:YES])])];
-    [self gap];
-
-    [self addHeader:@"Glance and shelf" note:@"Tap your shortcut to open Centre; hold it for a glance that disappears when you let go. While you drag anything, a drop zone appears at the top: what you drop waits on Home until you paste it (↩) or drag it out. Type “save session Study” to remember your open windows, then “Study” to bring them back."];
-    [self addFull:setCard(@[setRow(@"Hold for a glance", @"Time, next event, music, battery and your last copy.", [self switchFor:@"holdToPeek" fallback:YES]),
-                            setRow(@"Next event in the glance", @"Reads your calendar; macOS asks once.", [self switchFor:@"peekCalendar" fallback:YES]),
-                            setRow(@"Shelf drop zone", @"Shows while you drag files, links, text or images.", [self switchFor:@"shelfDropZone" fallback:YES])])];
+    [self addHeader:@"Features" note:nil];
+    [self addFull:setCard(@[setRow(@"Clipboard history", @"Last 100 texts, kept in memory only.", [self switchFor:@"clipboardHistory" fallback:YES]),
+                            setRow(@"Files in results", nil, [self switchFor:@"fileResults" fallback:YES]),
+                            setRow(@"Browser tabs in results", nil, [self switchFor:@"tabSearch" fallback:YES]),
+                            setRow(@"Preview beside the panel", nil, [self switchFor:@"previewFiles" fallback:YES]),
+                            setRow(@"Status line", @"Time, next event, battery and network.", [self switchFor:@"ambientLine" fallback:YES]),
+                            setRow(@"Glance", @"Hold the shortcut to peek; let go to dismiss.", [self switchFor:@"holdToPeek" fallback:YES]),
+                            setRow(@"Calendar in the glance", nil, [self switchFor:@"peekCalendar" fallback:YES]),
+                            setRow(@"Shelf", @"Drop anything at the top of the screen while dragging.", [self switchFor:@"shelfDropZone" fallback:YES])])];
     [self gap];
 
     // Browser details only matter once YouTube Music control is on.
     NSString *browser = [self.app ytmBrowser];
     BOOL ytm = [self.app.config[@"mediaYTM"] boolValue];
-    [self addHeader:@"Media" note:ytm ? [NSString stringWithFormat:@"YouTube Music control needs two one-time permissions: allow Centre to control %@ when macOS asks, and in %@ turn on View › Developer › Allow JavaScript from Apple Events.", browser, browser] : nil];
-    NSMutableArray *mediaRows = [@[setRow(@"Control any media player", @"Whatever last played: a video, podcast or another app.", [self switchFor:@"showMediaPlayer" fallback:YES]),
-                                  setRow(@"Control YouTube Music", @"Always targets the YouTube Music tab, even while a video plays.", [self switchFor:@"mediaYTM" fallback:NO])] mutableCopy];
-    if (ytm) [mediaRows addObject:setRow(@"Browser", @"Where YouTube Music runs. Starts Liked Music if no tab is open.", setField(browser, browser, 150, self, @selector(ytmBrowserChanged:)))];
+    [self addHeader:@"Media" note:ytm ? [NSString stringWithFormat:@"In %@, turn on View › Developer › Allow JavaScript from Apple Events.", browser] : nil];
+    NSMutableArray *mediaRows = [@[setRow(@"Player on Home", @"Whatever played last. × hides it until the next song.", [self switchFor:@"showMediaPlayer" fallback:YES]),
+                                  setRow(@"YouTube Music", @"Always control its tab, even while a video plays.", [self switchFor:@"mediaYTM" fallback:NO])] mutableCopy];
+    if (ytm) [mediaRows addObject:setRow(@"Browser", nil, setField(browser, browser, 150, self, @selector(ytmBrowserChanged:)))];
     [self addFull:setCard(mediaRows)];
     [self gap];
 
 }
 
+static BOOL gWantCustomEngine;   // "Custom" picked, URL not typed yet
 - (void)buildSearch {
     NSArray *eng = searchEngines();
     NSString *cur = [self.app.config[@"webSearch"] isKindOfClass:[NSString class]] ? self.app.config[@"webSearch"] : eng[0][1];
     NSInteger sel = (NSInteger)eng.count - 1;
-    for (NSUInteger i = 0; i + 1 < eng.count; i++) if ([eng[i][1] isEqualToString:cur]) sel = (NSInteger)i;
+    if (!gWantCustomEngine) for (NSUInteger i = 0; i + 1 < eng.count; i++) if ([eng[i][1] isEqualToString:cur]) sel = (NSInteger)i;
     NSPopUpButton *pop = [[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:NO];
     for (NSArray *e in eng) [pop addItemWithTitle:e[0]];
     [pop selectItemAtIndex:sel]; pop.target = self; pop.action = @selector(engineChanged:);
@@ -540,28 +562,36 @@ static NSArray *searchEngines(void) {
     custom.enabled = (sel == (NSInteger)eng.count - 1);
     self.enginePopup = pop; self.customURL = custom;
 
-    [self addHeader:@"Web search" note:@"Used when nothing else matches."];
-    [self addFull:setCard(@[setRow(@"Search engine", nil, pop), setRow(@"Search URL", @"%s becomes your query.", custom)])];
+    [self addHeader:@"Web search" note:nil];
+    NSMutableArray *webRows = [@[setRow(@"Search engine", @"When nothing on your Mac matches.", pop)] mutableCopy];
+    if (custom.enabled) [webRows addObject:setRow(@"Search URL", @"%s becomes your query.", custom)];
+    [self addFull:setCard(webRows)];
     [self gap];
-    [self addHeader:@"Keyword shortcuts" note:@"Type a keyword, a space, then your query — “yt lofi” searches YouTube. Double-click a cell to edit."];
+    [self addHeader:@"Keywords" note:@"“yt lofi” searches YouTube. Double-click to edit."];
     [self addFull:[self tableCardTag:1 columns:@[@[@"Keyword", @110], @[@"Search URL", @340]] height:200]];
 }
 
 - (void)buildLinks {
-    [self addHeader:@"Quick links" note:@"Type a link's name in Centre to open it. Double-click a cell to edit."];
+    [self addHeader:@"Quick links" note:@"Type a name to open its page."];
     [self addFull:[self tableCardTag:2 columns:@[@[@"Name", @150], @[@"URL", @300]] height:300]];
 }
 
 #pragma mark Permissions
 
-// Signed with a real certificate (stable identity) rather than ad-hoc (new identity every build)?
+// Signed by Centre's own certificate (the same identity every build), with an intact seal?
 static BOOL hasStableSignature(void) {
     SecCodeRef code = NULL; SecStaticCodeRef st = NULL; CFDictionaryRef info = NULL; BOOL ok = NO;
     if (SecCodeCopySelf(kSecCSDefaultFlags, &code) == errSecSuccess &&
         SecCodeCopyStaticCode(code, kSecCSDefaultFlags, &st) == errSecSuccess &&
+        SecStaticCodeCheckValidity(st, kSecCSStrictValidate | kSecCSCheckAllArchitectures, NULL) == errSecSuccess &&
         SecCodeCopySigningInformation(st, kSecCSSigningInformation, &info) == errSecSuccess && info) {
         NSArray *certs = ((__bridge NSDictionary *)info)[(__bridge NSString *)kSecCodeInfoCertificates];
-        ok = [certs isKindOfClass:[NSArray class]] && certs.count > 0;
+        if ([certs isKindOfClass:[NSArray class]] && certs.count) {
+            CFStringRef cn = NULL;
+            if (SecCertificateCopyCommonName((__bridge SecCertificateRef)certs.firstObject, &cn) == errSecSuccess && cn) {
+                ok = [(__bridge NSString *)cn isEqualToString:@"Centre Local Signing"]; CFRelease(cn);
+            }
+        }
     }
     if (info) CFRelease(info);
     if (st) CFRelease(st);
@@ -608,18 +638,13 @@ static OSStatus automationStatus(void) {
 
 - (void)buildPermissions {
     BOOL sig = hasStableSignature();
-    [self addHeader:@"Keep permissions after rebuilds"
-               note:@"Every rebuild used to get a throwaway signature, so macOS treated Centre as a new app and asked for access again. A private signing certificate, made once on this Mac, gives every build the same identity. macOS asks for your password once, then for each permission one last time."];
-    [self addFull:setCard(@[setRow(@"Stable signature", sig ? @"Rebuilds keep their permissions." : @"Creates a certificate in your login keychain.",
-                                   [self status:sig ? @"On" : @"Off" ok:sig action:sig ? nil : [self button:@"Set Up…" target:self action:@selector(setupSigning:)]])])];
-    [self gap];
 
     BOOL ax = AXIsProcessTrusted();
     [self.axTimer invalidate]; self.axTimer = nil;
     if (!ax) {
         __weak CSettings *ws = self;
         self.axTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) {
-            if (!ws || ws.page != pageIndex(@"Permissions") || !ws.window.visible) { [t invalidate]; return; }
+            if (!ws || ws.page != pageIndex(@"System") || !ws.window.visible) { [t invalidate]; return; }
             if (AXIsProcessTrusted()) { [t invalidate]; [ws showPage:ws.page]; }
         }];
     }
@@ -628,26 +653,40 @@ static OSStatus automationStatus(void) {
     NSString *aeText = ae == noErr ? @"Allowed" : ae == errAEEventNotPermitted ? @"Denied" : @"Not asked yet";
     NSButton *aeB = ae == noErr ? nil : ae == errAEEventNotPermitted ? [self privacyButton:@"Privacy_Automation"]
                                                                      : [self button:@"Allow…" target:self action:@selector(askAutomation:)];
-    [self addHeader:@"Access" note:@"Statuses refresh when you come back from System Settings."];
-    [self addFull:setCard(@[
-        setRow(@"Accessibility", ax ? @"Window snapping and pasting from clipboard history." : @"Grant resets Centre's old entry, then turn the new switch on.",
+    [self addHeader:@"Access" note:nil];
+    BOOL dev = [self.app isDevelopmentCopy];
+    NSMutableArray *access = [NSMutableArray new];
+    if (dev || !sig) [access addObject:setRow(@"Stable signature", sig ? @"Rebuilds keep their permissions." : @"Stops macOS asking again after every rebuild.",
+               [self status:sig ? @"On" : @"Off" ok:sig action:(sig || !dev) ? nil : [self button:@"Set Up…" target:self action:@selector(setupSigning:)]])];
+    [access addObjectsFromArray:@[
+        setRow(@"Accessibility", ax ? @"Windows, pasting and the taskbar." : @"Grant, then turn Centre's switch on.",
                [self status:ax ? @"Granted" : @"Not granted" ok:ax action:ax ? nil : [self button:@"Grant…" target:self.app action:@selector(grantAX)]]),
-        setRow(@"Documents folder", @"Centre lives here and rebuilds when its source changes.",
-               [self status:docs ? @"Granted" : @"Not granted" ok:docs action:docs ? nil : [self privacyButton:@"Privacy_FilesAndFolders"]]),
-        setRow(@"Automation", @"Sleep, dark mode, empty trash.", [self status:aeText ok:ae == noErr action:aeB])])];
+        setRow(@"Automation", @"System commands and browser tabs.", [self status:aeText ok:ae == noErr action:aeB])]];
+    if ([self.app.config[@"taskbarMenuBar"] boolValue]) {               // only asked for when the taskbar mirrors the menu bar
+        BOOL sc = CGPreflightScreenCaptureAccess();
+        [access addObject:setRow(@"Screen Recording", @"Menu bar icons on the taskbar.",
+                                 [self status:sc ? @"Granted" : @"Not granted" ok:sc action:sc ? nil : [self privacyButton:@"Privacy_ScreenCapture"]])];
+    }
+    if (dev) [access addObject:setRow(@"Documents folder", @"Where this build lives and rebuilds.",
+               [self status:docs ? @"Granted" : @"Not granted" ok:docs action:docs ? nil : [self privacyButton:@"Privacy_FilesAndFolders"]])];
+    [self addFull:setCard(access)];
 }
 
 - (void)buildAdvanced {
-    [self addHeader:@"App folders" note:@"Centre indexes applications in these folders and one level of subfolders."];
-    [self addFull:[self tableCardTag:3 columns:@[@[@"Folder", @460]] height:150]];
-    [self gap];
-    NSTextField *editor = setField([self.app.config[@"editor"] isKindOfClass:[NSString class]] ? self.app.config[@"editor"] : @"Zed", @"Zed", 150, self, @selector(editorChanged:));
+    NSDictionary *info = [NSBundle mainBundle].infoDictionary;
+    NSString *ver = [NSString stringWithFormat:@"%@ (build %@)%@", info[@"CFBundleShortVersionString"] ?: @"1.0", info[@"CFBundleVersion"] ?: @"1",
+                     [self.app isDevelopmentCopy] ? @" · development copy" : @""];
+    NSMutableArray *rows = [@[setRow(@"Version", ver, nil),
+                              setRow(@"Config file", [self.app.configPath stringByAbbreviatingWithTildeInPath], [self button:@"Reveal" target:self action:@selector(revealConfig:)]),
+                              setRow(@"Apps", @"Scan the app folders below again.", [self button:@"Rescan" target:self action:@selector(rescan:)]),
+                              setRow(@"Usage ranking", @"Forget what Most Used learned.", [self button:@"Reset" target:self action:@selector(resetUsage:)])] mutableCopy];
+    if ([self.app isDevelopmentCopy]) [rows addObject:setRow(@"Rebuild", @"Recompile this copy from its source.", [self button:@"Rebuild" target:self.app action:@selector(rebuild)])];
+    else [rows addObject:setRow(@"Uninstall Centre", @"Restores your Dock, removes the login item and moves Centre to the Bin.", [self button:@"Uninstall…" target:self.app action:@selector(uninstall)])];
     [self addHeader:@"Maintenance" note:nil];
-    [self addFull:setCard(@[setRow(@"Config file", [self.app.configPath stringByAbbreviatingWithTildeInPath], [self button:@"Reveal" target:self action:@selector(revealConfig:)]),
-                            setRow(@"Text editor", @"Used by “Open config.json”.", editor),
-                            setRow(@"App index", @"Scan app folders again now.", [self button:@"Rescan" target:self action:@selector(rescan:)]),
-                            setRow(@"Usage ranking", @"Forget launch counts behind Most Used.", [self button:@"Reset" target:self action:@selector(resetUsage:)]),
-                            setRow(@"Rebuild Centre", @"Recompile from Sources and relaunch.", [self button:@"Rebuild" target:self.app action:@selector(rebuild)])])];
+    [self addFull:setCard(rows)];
+    [self gap];
+    [self addHeader:@"App folders" note:@"Searched one level deep."];
+    [self addFull:[self tableCardTag:3 columns:@[@[@"Folder", @460]] height:130]];
 }
 
 #pragma mark Shared bits for list pages
@@ -658,7 +697,7 @@ static OSStatus automationStatus(void) {
 }
 - (NSButton *)iconButton:(NSString *)sym tip:(NSString *)tip action:(SEL)a tag:(NSInteger)tag {
     NSButton *b = [NSButton buttonWithImage:symSized(sym, 12, NSFontWeightMedium) target:self action:a];
-    b.bordered = NO; b.tag = tag; b.toolTip = tip; b.contentTintColor = [NSColor secondaryLabelColor];
+    b.bordered = NO; b.tag = tag; b.toolTip = tip; b.contentTintColor = [NSColor secondaryLabelColor]; b.accessibilityLabel = tip;
     [b.widthAnchor constraintEqualToConstant:22].active = YES;
     return b;
 }
@@ -702,7 +741,7 @@ static NSString *keyKind(NSString *k) {
 
 - (void)buildHomePage {
     NSArray *keys = [self.app pinnedKeys];
-    [self addHeader:@"Pinned" note:@"Buttons under Most Used. In Centre, select any command, app, folder or snippet and press ⇧⌘P to pin or unpin it. As many as fit on one row are shown."];
+    [self addHeader:@"Pinned" note:@"In Centre, ⇧⌘P pins or unpins the selection."];
     NSMutableArray *rows = [NSMutableArray new];
     for (NSUInteger i = 0; i < keys.count; i++) {
         NSButton *up = [self iconButton:@"chevron.up" tip:@"Move left" action:@selector(movePin:) tag:(NSInteger)i];
@@ -719,13 +758,13 @@ static NSString *keyKind(NSString *k) {
                                                       [self button:@"Restore Defaults" target:self action:@selector(resetPins:)]]]];
     [self gap];
     BOOL legacyOff = [self.app.config[@"showHomeExtras"] isEqual:@NO];
-    [self addHeader:@"Sections" note:@"What Home shows. Rows are trimmed so Home always fits one glance."];
-    [self addFull:setCard(@[setRow(@"Most used apps", @"Icon row below the search field.", [self switchFor:@"showMostUsed" fallback:YES]),
-                            setRow(@"Pinned", @"The buttons above.", [self switchFor:@"homePinned" fallback:!legacyOff]),
-                            setRow(@"Selected text and app actions", @"Acts on what you selected, or on the browser or Finder window you came from.", [self switchFor:@"homeContext" fallback:!legacyOff]),
-                            setRow(@"Clipboard", @"Your latest copies.", [self switchFor:@"homeClipboard" fallback:!legacyOff]),
-                            setRow(@"Recent files", @"Files you opened anywhere on this Mac.", [self switchFor:@"homeFiles" fallback:!legacyOff]),
-                            setRow(@"Recent commands", @"Commands, snippets and links you ran.", [self switchFor:@"homeCommands" fallback:!legacyOff])])];
+    [self addHeader:@"Sections" note:nil];
+    [self addFull:setCard(@[setRow(@"Most used apps", nil, [self switchFor:@"showMostUsed" fallback:YES]),
+                            setRow(@"Pinned", nil, [self switchFor:@"homePinned" fallback:!legacyOff]),
+                            setRow(@"Where you came from", @"Selected text, browser tabs, Finder and terminal actions.", [self switchFor:@"homeContext" fallback:!legacyOff]),
+                            setRow(@"Clipboard", nil, [self switchFor:@"homeClipboard" fallback:!legacyOff]),
+                            setRow(@"Recent files", nil, [self switchFor:@"homeFiles" fallback:!legacyOff]),
+                            setRow(@"Recent commands", nil, [self switchFor:@"homeCommands" fallback:!legacyOff])])];
 }
 - (void)movePin:(NSButton *)b {
     NSMutableArray *k = [[self.app pinnedKeys] mutableCopy]; NSInteger i = b.tag, j = i + ([b.identifier isEqualToString:@"up"] ? -1 : 1);
@@ -766,47 +805,45 @@ static NSString *keyKind(NSString *k) {
     NSDictionary *c = self.app.config;
     [self addHeader:@"Bar" note:nil];
     BOOL top = [c[@"taskbarPosition"] isEqual:@"top"];
-    [self addFull:setCard(@[setRow(@"Show the taskbar", @"On your main display, on every Space.", [self switchFor:@"taskbarEnabled" fallback:YES]),
-                            setRow(@"Position", top ? @"Just under the menu bar." : @"Along the bottom, above the Dock while the Dock shows.",
-                                   [self choice:@[@[@"Bottom", @"bottom"], @[@"Top", @"top"]] key:@"taskbarPosition" fallback:@"bottom"]),
+    (void)top;
+    [self addFull:setCard(@[setRow(@"Taskbar", nil, [self switchFor:@"taskbarEnabled" fallback:YES]),
+                            setRow(@"Position", nil, [self choice:@[@[@"Bottom", @"bottom"], @[@"Top", @"top"]] key:@"taskbarPosition" fallback:@"bottom"]),
                             setRow(@"Size", nil, [self choice:@[@[@"Compact", @"compact"], @[@"Standard", @"normal"], @[@"Large", @"large"]] key:@"taskbarSize" fallback:@"normal"]),
-                            setRow(@"Floating", @"Rounded, with a gap from the screen edge. Off: edge to edge.", [self switchFor:@"taskbarFloating" fallback:YES]),
-                            setRow(@"Auto-hide", top ? @"Slides away until the pointer reaches the menu bar." : @"Slides away until the pointer touches the bottom edge.", [self switchFor:@"taskbarAutoHide" fallback:NO]),
-                            setRow(@"Keep windows above the bar", @"Windows you zoom, tile or stretch over the bar stop just above it. Uses Accessibility; not while auto-hiding.",
-                                   [self switchFor:@"taskbarFitWindows" fallback:YES]),
-                            setRow(@"Hide in full screen", @"Steps aside for full-screen apps, videos, games and slideshows.", [self switchFor:@"taskbarHideFullScreen" fallback:YES])])];
+                            setRow(@"Floating", @"Off: edge to edge.", [self switchFor:@"taskbarFloating" fallback:YES]),
+                            setRow(@"Auto-hide", nil, [self switchFor:@"taskbarAutoHide" fallback:NO]),
+                            setRow(@"Keep windows above the bar", @"Uses Accessibility.", [self switchFor:@"taskbarFitWindows" fallback:YES]),
+                            setRow(@"Hide in full screen", nil, [self switchFor:@"taskbarHideFullScreen" fallback:YES])])];
     [self gap];
 
     NSString *dock = [c[@"taskbarDock"] isKindOfClass:[NSString class]] ? c[@"taskbarDock"] : @"keep";
     NSString *dockNote = [dock isEqualToString:@"off"] ? @"Never shows. Restored when you turn the bar off."
                        : [dock isEqualToString:@"autohide"] ? @"Slides up only when you point at the bottom edge."
                        : @"Left exactly as you set it in System Settings.";
-    [self addHeader:@"macOS Dock" note:@"Centre remembers your own Dock settings and puts them back when the taskbar is off or Centre quits."];
-    [self addFull:setCard(@[setRow(@"While the taskbar is on, the Dock", dockNote,
-                                   [self choice:@[@[@"Stays as it is", @"keep"], @[@"Hides automatically", @"autohide"], @[@"Is turned off", @"off"]] key:@"taskbarDock" fallback:@"keep"]),
-                            setRow(@"Quick minimise", @"Windows shrink away with Scale instead of the slower Genie. macOS has no instant option.",
-                                   [self switchFor:@"taskbarQuickMinimise" fallback:YES])])];
+    (void)dockNote;
+    [self addHeader:@"Windows and Dock" note:@"Your Dock settings come back when the taskbar is off."];
+    [self addFull:setCard(@[setRow(@"macOS Dock", nil,
+                                   [self choice:@[@[@"Unchanged", @"keep"], @[@"Auto-hide", @"autohide"], @[@"Off", @"off"]] key:@"taskbarDock" fallback:@"keep"]),
+                            setRow(@"One button per window", @"Minimised windows included.", [self invertedSwitchFor:@"taskbarGroup" fallback:NO]),
+                            setRow(@"App names", nil, [self switchFor:@"taskbarLabels" fallback:NO]),
+                            setRow(@"Quick minimise", nil, [self switchFor:@"taskbarQuickMinimise" fallback:YES])])];
     [self gap];
 
-    [self addHeader:@"Apps" note:nil];
-    [self addFull:setCard(@[setRow(@"Show app names", @"Icon and name for each app, like a classic task list.", [self switchFor:@"taskbarLabels" fallback:NO]),
-                            setRow(@"Group windows", @"One button per app. Off: one per window, minimised ones too (uses Accessibility).", [self switchFor:@"taskbarGroup" fallback:NO])])];
-    [self gap];
 
-    [self addHeader:@"Tray" note:@"Scroll on the speaker to change the volume; click it to mute. Click the clock for a calendar. Right-click anything in the tray for its settings."];
-    [self addFull:setCard(@[setRow(@"Clock", @"Off: the calendar is still in any tray item's right-click menu.", [self switchFor:@"taskbarClock" fallback:YES]),
-                            setRow(@"Now playing", @"Artwork and title from any app, or YouTube Music; click for the player.", [self switchFor:@"taskbarMedia" fallback:YES]),
-                            setRow(@"Menu bar icons", @"Copies of every menu bar icon; click one to open it at the top. Needs Screen Recording.", [self switchFor:@"taskbarMenuBar" fallback:NO]),
-                            setRow(@"Music controls", @"Previous, play or pause, and next, beside what's playing.", [self switchFor:@"taskbarMediaControls" fallback:YES]),
+    BOOL clockOn = ![c[@"taskbarClock"] isEqual:@NO], dateOn = ![c[@"taskbarDate"] isEqual:@NO];
+    NSPopUpButton *clock = [self popup:@[@"Off", @"Time", @"Time and date"] selected:!clockOn ? 0 : dateOn ? 2 : 1 ident:@"clock" action:@selector(clockChanged:)];
+    [self addHeader:@"Tray" note:@"Right-click anything in the tray for its settings."];
+    [self addFull:setCard(@[setRow(@"Now playing", nil, [self switchFor:@"taskbarMedia" fallback:YES]),
+                            setRow(@"Music controls", nil, [self switchFor:@"taskbarMediaControls" fallback:YES]),
+                            setRow(@"Menu bar icons", @"Needs Screen Recording.", [self switchFor:@"taskbarMenuBar" fallback:NO]),
                             setRow(@"Volume", nil, [self switchFor:@"taskbarVolume" fallback:YES]),
                             setRow(@"Wi-Fi", nil, [self switchFor:@"taskbarWifi" fallback:YES]),
-                            setRow(@"Battery", @"Percentage beside the icon.", [self switchFor:@"taskbarBattery" fallback:YES]),
-                            setRow(@"Date under the time", nil, [self switchFor:@"taskbarDate" fallback:YES]),
+                            setRow(@"Battery", nil, [self switchFor:@"taskbarBattery" fallback:YES]),
+                            setRow(@"Clock", nil, clock),
                             setRow(@"24-hour time", nil, [self switchFor:@"taskbar24h" fallback:NO]),
                             setRow(@"Seconds", nil, [self switchFor:@"taskbarSeconds" fallback:NO]),
-                            setRow(@"Show desktop button", @"At the far end: hides every app, click again to bring them back.", [self switchFor:@"taskbarDesktop" fallback:YES])])];
+                            setRow(@"Show desktop", nil, [self switchFor:@"taskbarDesktop" fallback:YES])])];
     [self gap];
-    [self addHeader:@"Pinned apps" note:@"Drag icons on the taskbar to reorder them. Right-click any app there to pin, unpin, hide, quit or jump to one of its windows."];
+    [self addHeader:@"Pinned apps" note:@"Drag icons on the bar to reorder."];
     NSArray *pins = tb ? [tb pinnedPaths] : @[];
     NSMutableArray *rows = [NSMutableArray new];
     for (NSUInteger i = 0; i < pins.count; i++) {
@@ -1247,10 +1284,13 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
 - (void)engineChanged:(NSPopUpButton *)p {
     NSArray *eng = searchEngines(); NSInteger i = p.indexOfSelectedItem;
     BOOL custom = (i == (NSInteger)eng.count - 1);
-    self.customURL.enabled = custom;
-    if (custom) { [self.window makeFirstResponder:self.customURL]; return; }
-    self.customURL.stringValue = eng[i][1];
+    gWantCustomEngine = custom;
+    if (custom) {                                               // show the URL field; saved once it holds a %s
+        dispatch_async(dispatch_get_main_queue(), ^{ [self showPage:self.page]; [self.window makeFirstResponder:self.customURL]; });
+        return;
+    }
     [self saveKey:@"webSearch" value:eng[i][1]];
+    dispatch_async(dispatch_get_main_queue(), ^{ [self showPage:self.page]; });
 }
 - (void)customChanged:(NSTextField *)f {
     NSString *s = [f.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
@@ -1261,9 +1301,10 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
     NSString *s = [f.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     if (s.length) [self saveKey:@"ytmBrowser" value:s];
 }
-- (void)editorChanged:(NSTextField *)f {
-    NSString *s = [f.stringValue stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    if (s.length) [self saveKey:@"editor" value:s];
+- (void)clockChanged:(NSPopUpButton *)p {
+    NSInteger i = p.indexOfSelectedItem;
+    [self saveKey:@"taskbarClock" value:@(i > 0)];
+    if (i > 0) [self saveKey:@"taskbarDate" value:@(i == 2)];
 }
 - (void)revealConfig:(id)s { [[NSWorkspace sharedWorkspace] selectFile:self.app.configPath inFileViewerRootedAtPath:@""]; }
 - (void)rescan:(NSButton *)b { [self.app scanApps]; b.title = @"Done"; b.enabled = NO; }
@@ -1284,7 +1325,7 @@ static NSArray *pairTitles(NSArray *pairs) { NSMutableArray *r = [NSMutableArray
 }
 - (void)windowDidBecomeKey:(NSNotification *)n {
     // Coming back from System Settings: refresh the Permissions statuses (scroll position is kept).
-    if (self.page == pageIndex(@"Permissions") && self.pageStack) [self showPage:self.page];
+    if (self.page == pageIndex(@"System") && self.pageStack) [self showPage:self.page];
 }
 @end
 

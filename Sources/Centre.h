@@ -64,7 +64,6 @@ void copyText(NSString *s);
 void openURLString(NSString *s);
 NSString *urlEncode(NSString *s);
 double fuzzyScore(NSString *query, NSString *target);
-NSImage *symbolImage(NSString *name);
 NSImage *prerenderIcon(NSImage *src);
 NSDictionary<NSString *, NSNumber *> *hotkeyKeyMap(void);
 NSString *prettyHotkey(NSString *spec);

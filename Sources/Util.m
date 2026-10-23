@@ -145,18 +145,6 @@ double fuzzyScore(NSString *query, NSString *target) {
     return score;
 }
 
-NSImage *symbolImage(NSString *name) {
-    if (@available(macOS 11.0, *)) {
-        NSImage *img = [NSImage imageWithSystemSymbolName:name accessibilityDescription:nil];
-        if (img) {
-            NSImageSymbolConfiguration *cfg = [NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightRegular];
-            img = [img imageWithSymbolConfiguration:cfg];
-            img.template = YES;
-            return img;
-        }
-    }
-    return [NSImage imageNamed:NSImageNameActionTemplate];
-}
 
 // Decode an icon once into a 128px bitmap (off the main thread) so drawing it later is a plain blit.
 NSImage *prerenderIcon(NSImage *src) {
@@ -233,6 +221,7 @@ void moveFrontWindow(NSRunningApplication *app, NSString *mode) {
         return;
     }
     AXUIElementRef appEl = AXUIElementCreateApplication(app.processIdentifier);
+    AXUIElementSetMessagingTimeout(appEl, 0.5);                 // a frozen app must not freeze Centre
     CFTypeRef win = NULL;
     AXUIElementCopyAttributeValue(appEl, kAXFocusedWindowAttribute, &win);
     if (!win) { CFRelease(appEl); return; }

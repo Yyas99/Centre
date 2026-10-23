@@ -1,5 +1,6 @@
 // Centre — a lightweight native launcher for macOS. Builds with Command Line Tools only (./centre).
 #import "App.h"
+#include <signal.h>
 #import "Settings.h"
 #import "Taskbar.h"
 #import <ServiceManagement/ServiceManagement.h>
@@ -286,7 +287,15 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     BOOL want = [self.config[@"showMenuBarIcon"] boolValue];
     if (want && !self.status) {
         self.status = [[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength];
-        NSImage *si = symbolImage(@"circle.circle"); si.template = YES;
+        // Centre's mark, drawn for the menu bar: an open ring around a solid core, like the app icon.
+        NSImage *si = [NSImage imageWithSize:NSMakeSize(18, 18) flipped:NO drawingHandler:^BOOL(NSRect r) {
+            [[NSColor blackColor] set];
+            NSBezierPath *ring = [NSBezierPath bezierPath];
+            [ring appendBezierPathWithArcWithCenter:NSMakePoint(9, 9) radius:6.6 startAngle:42 endAngle:318];
+            ring.lineWidth = 1.9; ring.lineCapStyle = NSLineCapStyleRound; [ring stroke];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(9 - 2.3, 9 - 2.3, 4.6, 4.6)] fill];
+            return YES; }];
+        si.template = YES; si.accessibilityDescription = @"Centre";
         self.status.button.image = si;
         [self updateStatusMenu];
     } else if (!want && self.status) {
@@ -300,17 +309,10 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     [m addItemWithTitle:[NSString stringWithFormat:@"Open Centre  (%@)", hk] action:@selector(show) keyEquivalent:@""].target = self;
     [m addItem:[NSMenuItem separatorItem]];
     [m addItemWithTitle:@"Settings…" action:@selector(openSettings) keyEquivalent:@","].target = self;
-    [m addItemWithTitle:@"Rescan Apps" action:@selector(scanApps) keyEquivalent:@""].target = self;
-    [m addItemWithTitle:@"Grant Accessibility (window commands, auto-paste)" action:@selector(grantAX) keyEquivalent:@""].target = self;
-    [m addItemWithTitle:@"Start at Login (toggle)" action:@selector(toggleLoginItem) keyEquivalent:@""].target = self;
+    if (!AXIsProcessTrusted()) [m addItemWithTitle:@"Allow Accessibility…" action:@selector(grantAX) keyEquivalent:@""].target = self;
     [m addItem:[NSMenuItem separatorItem]];
     [m addItemWithTitle:@"Quit Centre" action:@selector(terminate:) keyEquivalent:@""].target = NSApp;
     self.status.menu = m;
-}
-- (void)openConfigFile {
-    // Always a text editor: config "editor" app name → Zed → TextEdit. Never the browser that owns .json.
-    NSString *ed = [self.config[@"editor"] isKindOfClass:[NSString class]] ? self.config[@"editor"] : @"Zed";
-    runShell([NSString stringWithFormat:@"open -a '%@' '%@' 2>/dev/null || open -e '%@'", ed, self.configPath, self.configPath], nil);
 }
 
 #pragma mark Settings
@@ -355,15 +357,30 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     osa(s);
 }
 - (void)resetUsage { self.usage = [NSMutableDictionary new]; [[NSFileManager defaultManager] removeItemAtPath:self.usagePath error:nil]; }
-// A switch left on from an earlier build belongs to that build's signature: it looks granted but doesn't apply.
-// Clear Centre's entry first so macOS asks fresh and the new switch belongs to this build.
+// Asks macOS for Accessibility and opens its settings. Never resets an existing entry: every build is signed
+// with the same certificate, so a switch you turned on once keeps applying.
 - (void)grantAX {
     if (AXIsProcessTrusted()) return;
-    runShell(@"/usr/bin/tccutil reset Accessibility com.y.centre", ^(NSString *out) {
-        NSDictionary *o = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
-        AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)o);
-        openURLString(@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
-    });
+    NSDictionary *o = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)o);
+    openURLString(@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+}
+// Uninstall: put the Dock back, leave Login Items, move the app to the Bin and quit. Settings are kept.
+- (void)uninstall {
+    NSAlert *a = [NSAlert new]; a.messageText = @"Uninstall Centre?";
+    a.informativeText = @"Centre puts your Dock back as it was, removes itself from Login Items, moves itself to the Bin and quits. "
+                        "Your settings stay in ~/Library/Application Support/Centre in case you reinstall.";
+    [a addButtonWithTitle:@"Uninstall"]; [a addButtonWithTitle:@"Cancel"];
+    a.buttons.firstObject.hasDestructiveAction = YES;
+    [NSApp activateIgnoringOtherApps:YES];
+    if ([a runModal] != NSAlertFirstButtonReturn) return;
+    [self trace:@"uninstalling"];
+    [self.taskbar restoreDockNow];
+    if (@available(macOS 13.0, *)) [SMAppService.mainAppService unregisterAndReturnError:nil];
+    NSMutableDictionary *c = [self mutableConfig]; c[@"launchAtLogin"] = @NO; [c removeObjectForKey:@"loginItemPath"]; [self writeConfig:c];
+    [[NSWorkspace sharedWorkspace] recycleURLs:@[[NSBundle mainBundle].bundleURL] completionHandler:^(NSDictionary *moved, NSError *err) {
+        dispatch_async(dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
+    }];
 }
 - (void)toggleLoginItem {
     BOOL on = ![self launchesAtLogin];
@@ -373,8 +390,18 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 
 #pragma mark Self-rebuild
 - (NSString *)sourceDir { return [[NSBundle mainBundle].bundlePath stringByDeletingLastPathComponent]; }
+// The development copy lives beside its source and rebuilds itself; an installed copy (/Applications) never does.
+- (BOOL)isDevelopmentCopy {
+    static BOOL dev; static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSString *d = self.sourceDir; NSFileManager *fm = [NSFileManager defaultManager];
+        dev = [fm fileExistsAtPath:[d stringByAppendingPathComponent:@"Sources"]] && [fm fileExistsAtPath:[d stringByAppendingPathComponent:@"centre"]];
+    });
+    return dev;
+}
 // Newest modification time across Sources/*.m and *.h.
 - (NSDate *)sourceDate {
+    if (![self isDevelopmentCopy]) return nil;
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *dir = [self.sourceDir stringByAppendingPathComponent:@"Sources"];
     NSDate *newest = nil;
@@ -396,6 +423,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 // script signs the binary just after installing it, and holds its lock until then.
 - (BOOL)installedBuildIsNewer {
     static NSDate *launched; static dispatch_once_t once;
+    if (![self isDevelopmentCopy]) return NO;                 // the installed copy is replaced only by an install, after it quits
     NSString *bin = [NSBundle mainBundle].executablePath, *lock = [self.sourceDir stringByAppendingPathComponent:@".agent/build.lock"];
     NSDate *now = [[[NSFileManager defaultManager] attributesOfItemAtPath:bin error:nil] fileModificationDate];
     dispatch_once(&once, ^{ launched = now; });
@@ -419,7 +447,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 // quiet = triggered by the file watcher: a failed build is logged to build.log and retried on the next save, no alert.
 - (void)rebuildQuietly:(BOOL)quiet {
     NSString *dir = self.sourceDir;
-    if (self.rebuilding || ![[NSFileManager defaultManager] fileExistsAtPath:[dir stringByAppendingPathComponent:@"centre"]]) return;
+    if (self.rebuilding || ![self isDevelopmentCopy]) return;
     self.rebuilding = YES;
     NSDate *src = [self sourceDate];
     [self trace:@"rebuilding"];
@@ -462,10 +490,10 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 }
 
 #pragma mark Lifecycle
-// Lifecycle trace for debugging (.agent/trace.log next to the app; the agent's "trace" job prints it).
+// Lifecycle log (~/Library/Logs/Centre/trace.log): launch, rebuild, relaunch, quit. "./centre trace" prints it.
 - (void)trace:(NSString *)what {
     if (self.snapshotDir) return;
-    NSString *dir = [self.sourceDir stringByAppendingPathComponent:@".agent"], *p = [dir stringByAppendingPathComponent:@"trace.log"];
+    NSString *dir = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/Centre"], *p = [dir stringByAppendingPathComponent:@"trace.log"];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSDateFormatter *f = [NSDateFormatter new]; f.dateFormat = @"MM-dd HH:mm:ss";
     NSString *line = [NSString stringWithFormat:@"%@  pid %d  %@\n", [f stringFromDate:[NSDate date]], getpid(), what];
@@ -476,7 +504,8 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
 }
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
     if (self.snapshotDir) { [self runSnapshots]; return; }
-    [self trace:[NSString stringWithFormat:@"launched (sources newer: %@)", [self sourceIsNewer] ? @"yes" : @"no"]];
+    [self trace:[NSString stringWithFormat:@"launched %@ (build %@%@)", [NSBundle mainBundle].bundlePath,
+                 [NSBundle mainBundle].infoDictionary[@"CFBundleVersion"] ?: @"?", [self sourceIsNewer] ? @", sources newer" : @""]];
     if ([self sourceIsNewer]) { [self rebuild]; return; }          // a failed build falls back to -startNormally
     [self startNormally];
 }
@@ -486,6 +515,12 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     if (self.panel) return;
     [self installedBuildIsNewer];                 // remember which build this process is
     [self trace:@"running"];
+    // A plain "kill" (an install or update quitting Centre) still quits properly, so the Dock is put back.
+    signal(SIGTERM, SIG_IGN);
+    static dispatch_source_t termSource;
+    termSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGTERM, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(termSource, ^{ [NSApp terminate:nil]; });
+    dispatch_resume(termSource);
     [[NSDistributedNotificationCenter defaultCenter] addObserverForName:@"com.y.centre.show" object:nil queue:[NSOperationQueue mainQueue]
         usingBlock:^(NSNotification *note) { [self show]; }];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
@@ -498,7 +533,18 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     // config, so every start puts it back quietly (older configs: adopt what macOS has now).
     if (@available(macOS 13.0, *)) {
         if (!self.config[@"launchAtLogin"]) { if ([self launchesAtLogin]) { NSMutableDictionary *c = [self mutableConfig]; c[@"launchAtLogin"] = @YES; [self writeConfig:c]; } }
-        else if ([self.config[@"launchAtLogin"] boolValue] && ![self launchesAtLogin]) [SMAppService.mainAppService registerAndReturnError:nil];
+        else if ([self.config[@"launchAtLogin"] boolValue]) {
+            // The login item must start the copy you use. A development build stays out of it once Centre is
+            // installed; the installed copy re-registers itself the first time it runs from a new place.
+            BOOL installedExists = [[NSFileManager defaultManager] fileExistsAtPath:@"/Applications/Centre.app"];
+            NSString *here = [NSBundle mainBundle].bundlePath;
+            if (![self isDevelopmentCopy] && ![self.config[@"loginItemPath"] isEqual:here]) {
+                [SMAppService.mainAppService unregisterAndReturnError:nil];
+                if ([SMAppService.mainAppService registerAndReturnError:nil]) {
+                    NSMutableDictionary *c = [self mutableConfig]; c[@"loginItemPath"] = here; [self writeConfig:c];
+                }
+            } else if (![self launchesAtLogin] && !([self isDevelopmentCopy] && installedExists)) [SMAppService.mainAppService registerAndReturnError:nil];
+        }
     }
     [self buildUI];
     [self startMediaObservers];

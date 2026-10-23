@@ -13,7 +13,7 @@ static int runAgent(NSString *dir) {
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *inbox = [dir stringByAppendingPathComponent:@".agent/inbox"], *outDir = [dir stringByAppendingPathComponent:@".agent/out"];
     [fm createDirectoryAtPath:outDir withIntermediateDirectories:YES attributes:nil error:nil];
-    NSSet *allowed = [NSSet setWithArray:@[@"build", @"restart", @"stop", @"test", @"shots", @"snap", @"status", @"log", @"crash", @"trace"]];
+    NSSet *allowed = [NSSet setWithArray:@[@"build", @"restart", @"stop", @"test", @"shots", @"snap", @"status", @"log", @"crash", @"trace", @"install"]];
     setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin", 1);
     setenv("CENTRE_AGENT", "1", 1);
     for (int round = 0; round < 100; round++) {
@@ -60,7 +60,15 @@ int main(int argc, const char *argv[]) {
     @autoreleasepool {
         // Build check: the build script runs every new binary with --selftest before installing it.
         if (argc > 1 && !strcmp(argv[1], "--selftest")) return runSelfTests();
-        if (argc > 2 && !strcmp(argv[1], "--agent")) return runAgent([NSString stringWithUTF8String:argv[2]]);
+        if (argc > 2 && !strcmp(argv[1], "--agent")) {
+            // Development copy only, and only for its own folder: an installed Centre never runs build jobs,
+            // and no other folder's script can borrow Centre's permissions this way.
+            NSString *dir = [NSString stringWithUTF8String:argv[2]].stringByStandardizingPath;
+            NSString *home = [[NSBundle mainBundle].bundlePath stringByDeletingLastPathComponent].stringByStandardizingPath;
+            BOOL dev = [[NSFileManager defaultManager] fileExistsAtPath:[home stringByAppendingPathComponent:@"Sources"]];
+            if (!dev || ![dir isEqualToString:home]) { fprintf(stderr, "Centre: --agent only runs from its development folder\n"); return 1; }
+            return runAgent(dir);
+        }
         // Single instance: if another Centre is already running, tell it to show and exit.
         NSString *snapDir = nil;
         BOOL readme = NO;

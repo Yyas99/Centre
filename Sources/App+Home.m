@@ -34,7 +34,6 @@
     return out;
 }
 
-- (NSArray<CItem *> *)quickActions { return [self pinnedItems]; }
 
 // Commands, snippets, transforms and links you ran, newest first.
 - (NSArray<CItem *> *)recentCommands:(NSInteger)limit exclude:(NSSet *)skip {

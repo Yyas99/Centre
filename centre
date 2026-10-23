@@ -1,31 +1,34 @@
 #!/bin/bash
-# Centre launcher — builds (if needed) and runs Centre.app. Needs only Command Line Tools (clang).
-#   ./centre          build if Sources/ changed, then (re)launch
-#   ./centre build    force rebuild
-#   ./centre stop     quit Centre
-#   ./centre log      show recent Centre log lines
-#   ./centre restart  build if needed, then relaunch now
-#   ./centre test     run the self-test on the installed build
-#   ./centre shots    render the README screenshots into docs/
-#   ./centre snap     render every design snapshot into .agent/snaps/
-#   ./centre status   is it running, which build, last build result
-#   ./centre crash    the newest crash report, if any
-#   ./centre trace    Centre's own lifecycle log (launch, rebuild, relaunch, quit)
-# The build agent (installed on every build) runs any of these without Terminal or a running Centre:
-# drop a file named <id>.job containing the command into .agent/inbox; the output lands in .agent/out/<id>.log
-# and the exit code in .agent/out/<id>.exit.
+# Centre — build, run and install. Needs only the Xcode Command Line Tools (clang).
+#
+#   ./centre            build if Sources/ changed, then open Centre
+#   ./centre build      force a rebuild (the build is signed and self-tested before it replaces the old one)
+#   ./centre install    build, then install into /Applications and open it there
+#   ./centre restart    relaunch now      ./centre stop      quit
+#   ./centre test       self-test         ./centre status    build, signature and install details
+#   ./centre shots      README screenshots into docs/      ./centre snap   every design snapshot into .agent/snaps/
+#   ./centre log | crash | trace          recent log lines, newest crash report, Centre's lifecycle log
+#
+# The build agent (a LaunchAgent this script installs) runs any of these without Terminal: put a file named
+# <id>.job containing the command into .agent/inbox; output lands in .agent/out/<id>.log, exit code in <id>.exit.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/Centre.app"
 BIN="$APP/Contents/MacOS/Centre"
 SRCDIR="$DIR/Sources"
-
+DEST="/Applications/Centre.app"
 AGENT="$DIR/.agent"
+TRACE="$HOME/Library/Logs/Centre/trace.log"
 APPRE='Centre\.app/Contents/MacOS/Centre$'   # the app itself; agent, self-test and render runs carry arguments
+SIGN_NAME="Centre Local Signing"
+VERSION="1.0"
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 mkdir -p "$AGENT/inbox" "$AGENT/out"
 
-# Run a Centre binary with a time limit (offscreen renders and self-tests must never hang a job).
-limited() {
+# The copy you use: the installed one once it exists, otherwise the build here.
+run_app() { if [ -d "$DEST" ]; then echo "$DEST"; else echo "$APP"; fi; }
+
+limited() {   # run with a time limit: renders and self-tests must never hang a job
   local secs=$1; shift
   "$@" & local p=$!
   for i in $(seq 1 $((secs * 10))); do kill -0 $p 2>/dev/null || break; sleep 0.1; done
@@ -33,12 +36,16 @@ limited() {
   wait $p
 }
 
-# The build agent: a LaunchAgent that runs this script for queued jobs. It is the Centre binary itself in
-# --agent mode, so it works with Centre's own permissions and needs nothing else installed.
+quit_centre() {   # a normal quit first, so Centre puts the Dock back; force only if it hangs
+  pkill -TERM -f "$APPRE" 2>/dev/null || true
+  for i in $(seq 1 50); do pgrep -f "$APPRE" >/dev/null || return 0; sleep 0.1; done
+  pkill -9 -f "$APPRE" 2>/dev/null || true
+}
+
+# The build agent is the Centre binary in --agent mode, so it works under Centre's own permissions.
 install_agent() {
-  local label=com.y.centre.agent pl="$HOME/Library/LaunchAgents/com.y.centre.agent.plist"
+  local label=com.y.centre.agent pl="$HOME/Library/LaunchAgents/com.y.centre.agent.plist" want
   mkdir -p "$HOME/Library/LaunchAgents"
-  local want
   want=$(cat <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -57,47 +64,17 @@ PL
     printf '%s\n' "$want" > "$pl"
     launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
   fi
-  {
-    date
-    launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$pl" 2>&1 || true
-    launchctl print "gui/$(id -u)/$label" 2>&1 | grep -E 'state|path|last exit|runs|error' | head -12
-  } > "$AGENT/install.log" 2>&1 || true
+  launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" "$pl" >/dev/null 2>&1 || true
 }
 
 case "$1" in
-  stop) pkill -f "$APPRE" 2>/dev/null || true; echo "Centre stopped"; exit 0 ;;
+  stop) quit_centre; echo "Centre stopped"; exit 0 ;;
   log) log show --predicate 'process == "Centre"' --last 10m --style compact 2>/dev/null | tail -60; exit 0 ;;
-  crash)
-    f=$(ls -t "$HOME/Library/Logs/DiagnosticReports"/Centre*.ips 2>/dev/null | head -1)
-    if [ -z "$f" ]; then echo "No crash reports"; else echo "$f"; head -c 12000 "$f"; fi; exit 0 ;;
+  crash) f=$(ls -t "$HOME/Library/Logs/DiagnosticReports"/Centre*.ips 2>/dev/null | head -1)
+         if [ -z "$f" ]; then echo "No crash reports"; else echo "$f"; head -c 12000 "$f"; fi; exit 0 ;;
+  trace) tail -40 "$TRACE" 2>/dev/null || echo "No trace yet"; exit 0 ;;
   agent-install) install_agent; echo "Agent installed"; exit 0 ;;
-  trace) tail -40 "$AGENT/trace.log" 2>/dev/null || echo "No trace yet"; exit 0 ;;
 esac
-
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Centre</string>
-  <key>CFBundleDisplayName</key><string>Centre</string>
-  <key>CFBundleIdentifier</key><string>com.y.centre</string>
-  <key>CFBundleExecutable</key><string>Centre</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleVersion</key><string>2.0</string>
-  <key>CFBundleShortVersionString</key><string>2.0</string>
-  <key>CFBundleIconFile</key><string>Centre</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSAppleEventsUsageDescription</key><string>Centre runs system commands (sleep, dark mode, empty trash, login item) through System Events and Finder.</string>
-  <key>NSCalendarsUsageDescription</key><string>Centre shows your next event when you hold its shortcut for a glance.</string>
-  <key>NSCalendarsFullAccessUsageDescription</key><string>Centre shows your next event when you hold its shortcut for a glance.</string>
-  <key>NSHumanReadableCopyright</key><string>Y</string>
-</dict></plist>
-PLIST
-[ -f "$DIR/Centre.icns" ] && cp -f "$DIR/Centre.icns" "$APP/Contents/Resources/Centre.icns"
-touch "$APP"   # nudge Finder/Dock icon cache
 
 stale() { [ ! -x "$BIN" ] || [ -n "$(find "$SRCDIR" \( -name '*.m' -o -name '*.h' \) -newer "$BIN" 2>/dev/null | head -1)" ]; }
 
@@ -111,6 +88,12 @@ done
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
 if [ "$1" = "build" ] || stale; then
+  # Signing identity first: a build without it would get a new identity and lose every permission.
+  SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | awk -v n="\"$SIGN_NAME\"" 'index($0, n) {print $2; exit}')
+  if [ -z "$SIGN_ID" ]; then
+    echo "No \"$SIGN_NAME\" certificate — run setup-signing.sh (Settings › System) first. Keeping the current build." | tee "$DIR/build.log"
+    exit 1
+  fi
   echo "Compiling Centre…"
   set -o pipefail
   clang -fobjc-arc -O2 -Wall -Wno-deprecated-declarations -Wno-multichar -Wno-unused-variable \
@@ -120,23 +103,54 @@ if [ "$1" = "build" ] || stale; then
   set +o pipefail
 
   # The new build must pass its own checks before it replaces the working app.
-  "$BIN.new" --selftest >> "$DIR/build.log" 2>&1 &
-  T=$!; for i in $(seq 1 100); do kill -0 $T 2>/dev/null || break; sleep 0.1; done
-  if kill -0 $T 2>/dev/null; then kill -9 $T 2>/dev/null; echo "Self-test timed out" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1; fi
-  if ! wait $T; then echo "Self-test failed — keeping the previous build" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1; fi
-
-  mv -f "$BIN.new" "$BIN"
-  if command -v codesign >/dev/null 2>&1; then
-    # Sign with the local certificate from setup-signing.sh when it exists, so macOS keeps Centre's
-    # permissions across rebuilds; otherwise fall back to an ad-hoc signature.
-    SIGN_ID=$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Centre Local Signing"/ {print $2; exit}')
-    codesign -s "${SIGN_ID:--}" -f --identifier com.y.centre "$APP" >/dev/null 2>&1 \
-      || codesign -s - -f --identifier com.y.centre "$APP" >/dev/null 2>&1 || true
+  if ! limited 10 "$BIN.new" --selftest >> "$DIR/build.log" 2>&1; then
+    echo "Self-test failed — keeping the previous build" | tee -a "$DIR/build.log"; rm -f "$BIN.new"; exit 1
   fi
-  # Re-register with Launch Services so Finder, the Dock and notifications drop any cached icon.
-  LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+
+  # Assemble the bundle. Everything inside it is written before signing and never touched afterwards,
+  # because any change to a signed bundle breaks its signature (and macOS then drops its permissions).
+  # It is built as a fresh bundle next to the old one and swapped in only once it is signed and verified.
+  BUILD_NO=$(git -C "$DIR" rev-list --count HEAD 2>/dev/null || echo 1)
+  STAGE="$DIR/.agent/Centre.app"
+  rm -rf "$STAGE"; mkdir -p "$STAGE/Contents/MacOS" "$STAGE/Contents/Resources"
+  mv -f "$BIN.new" "$STAGE/Contents/MacOS/Centre"
+  cat > "$STAGE/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Centre</string>
+  <key>CFBundleDisplayName</key><string>Centre</string>
+  <key>CFBundleIdentifier</key><string>com.y.centre</string>
+  <key>CFBundleExecutable</key><string>Centre</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD_NO</string>
+  <key>CFBundleIconFile</key><string>Centre</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Centre runs system commands, reads your open browser tabs and controls music through the apps you use.</string>
+  <key>NSCalendarsUsageDescription</key><string>Centre shows your next event in its status line and glance.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>Centre shows your next event in its status line and glance.</string>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Yyas99. Built with Claude.</string>
+</dict></plist>
+PLIST
+  [ -f "$DIR/Centre.icns" ] && cp -f "$DIR/Centre.icns" "$STAGE/Contents/Resources/Centre.icns"
+
+  xattr -cr "$STAGE" 2>/dev/null || true   # Finder info and quarantine flags make codesign refuse the bundle
+  # Never fall back to an unsigned or ad-hoc build: that is a new identity, and macOS would ask for everything again.
+  if ! codesign -s "$SIGN_ID" -f --identifier com.y.centre --timestamp=none "$STAGE" >>"$DIR/build.log" 2>&1 \
+     || ! codesign --verify --strict "$STAGE" >>"$DIR/build.log" 2>&1; then
+    echo "Signing failed — keeping the previous build" | tee -a "$DIR/build.log"; rm -rf "$STAGE"; exit 1
+  fi
+  rm -rf "$APP.old"; [ -d "$APP" ] && mv "$APP" "$APP.old"
+  mv "$STAGE" "$APP"; rm -rf "$APP.old"
   [ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
-  echo "Built $APP"
+  echo "Built $APP ($VERSION, build $BUILD_NO)"
 else
   echo "Up to date"
 fi
@@ -145,24 +159,42 @@ install_agent
 
 case "$1" in
   test) limited 20 "$BIN" --selftest; exit $? ;;
-  shots) rm -rf "$DIR/.agent/shots"; limited 90 "$BIN" --readme "$DIR/.agent/shots" >/dev/null 2>&1 || true
-         n=$(ls "$DIR/.agent/shots"/*.png 2>/dev/null | wc -l | tr -d ' ')
-         if [ "$n" -gt 0 ]; then cp -f "$DIR/.agent/shots"/*.png "$DIR/docs/"; echo "Rendered $n screenshots into docs/"; else echo "No screenshots rendered"; exit 1; fi
+  shots) rm -rf "$AGENT/shots"; limited 90 "$BIN" --readme "$AGENT/shots" >/dev/null 2>&1 || true
+         n=$(ls "$AGENT/shots"/*.png 2>/dev/null | wc -l | tr -d ' ')
+         if [ "$n" -gt 0 ]; then cp -f "$AGENT/shots"/*.png "$DIR/docs/"; echo "Rendered $n screenshots into docs/"; else echo "No screenshots rendered"; exit 1; fi
          exit 0 ;;
   snap) rm -rf "$AGENT/snaps"; limited 120 "$BIN" --snapshot "$AGENT/snaps" >/dev/null 2>&1 || true
         echo "$(ls "$AGENT/snaps" 2>/dev/null | wc -l | tr -d ' ') snapshots in .agent/snaps"; exit 0 ;;
   status)
-    if pgrep -f "$APPRE" >/dev/null; then echo "Running: yes"; else echo "Running: no"; fi
-    echo "Build: $(stat -f '%Sm' "$BIN" 2>/dev/null)"; echo "Sources newer than build: $(stale && echo yes || echo no)"
-    echo "Last build log:"; tail -5 "$DIR/build.log" 2>/dev/null; exit 0 ;;
+    if pgrep -f "$APPRE" >/dev/null; then echo "Running: $(ps -o args= -p "$(pgrep -f "$APPRE" | head -1)")"; else echo "Running: no"; fi
+    echo "Build here: $(defaults read "$APP/Contents/Info" CFBundleVersion 2>/dev/null) · $(stat -f '%Sm' "$BIN" 2>/dev/null) · sources newer: $(stale && echo yes || echo no)"
+    [ -d "$DEST" ] && echo "Installed: $(defaults read "$DEST/Contents/Info" CFBundleShortVersionString 2>/dev/null) build $(defaults read "$DEST/Contents/Info" CFBundleVersion 2>/dev/null)"
+    for a in "$APP" "$DEST"; do [ -d "$a" ] || continue
+      echo "--- $a"; codesign -dv "$a" 2>&1 | grep -E 'Authority|Identifier='; codesign --verify --strict "$a" 2>&1 && echo "signature valid"
+    done
+    echo "--- last build"; tail -3 "$DIR/build.log" 2>/dev/null
+    exit 0 ;;
+  install)
+    quit_centre
+    rm -rf "$DEST.new"
+    if ! ditto "$APP" "$DEST.new" 2>/dev/null; then echo "Couldn't write to /Applications"; exit 1; fi
+    codesign --verify --strict "$DEST.new" || { echo "The copy's signature didn't verify; nothing was replaced"; rm -rf "$DEST.new"; exit 1; }
+    if [ -d "$DEST" ] && ! rm -rf "$DEST" 2>/dev/null; then
+      rm -rf "$DEST.new"
+      echo "macOS blocked replacing /Applications/Centre.app. Allow Centre under System Settings › Privacy & Security › App Management, then install again."
+      open "$DEST"; exit 1
+    fi
+    mv "$DEST.new" "$DEST"
+    [ -x "$LSREG" ] && "$LSREG" -f "$DEST" >/dev/null 2>&1 || true
+    open "$DEST"
+    echo "Installed Centre $VERSION (build $(defaults read "$DEST/Contents/Info" CFBundleVersion 2>/dev/null)) in /Applications"
+    exit 0 ;;
 esac
 
 [ -n "$CENTRE_NO_LAUNCH" ] && exit 0   # in-app rebuild: the app relaunches itself
-# From the agent, "build" only starts Centre if it isn't running: a running Centre picks up the new build by
-# itself as soon as its panel is closed. "restart" (or ./centre from Terminal) relaunches right away.
-if [ -n "$CENTRE_AGENT" ] && [ "$1" = "build" ] && pgrep -f "$APPRE" >/dev/null; then echo "Centre will switch to the new build when its panel is closed"; exit 0; fi
-pkill -f "$APPRE" 2>/dev/null || true
-for i in $(seq 1 30); do pgrep -f "$APPRE" >/dev/null || break; sleep 0.1; done   # wait for old one to exit
-pkill -9 -f "$APPRE" 2>/dev/null || true
-open "$APP"
+# From the agent, "build" never interrupts a running Centre: it switches to a new build of itself once its
+# panel is closed, and the installed copy only changes with "install". "restart" relaunches right away.
+if [ -n "$CENTRE_AGENT" ] && [ "$1" = "build" ] && { pgrep -f "$APPRE" >/dev/null || [ -d "$DEST" ]; }; then echo "Built; not launched"; exit 0; fi
+quit_centre
+open "$(run_app)"
 echo "Centre is running — press ⌘ Space."

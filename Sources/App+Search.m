@@ -74,7 +74,7 @@ static void lockScreenNow(void) {
     // Centre
     [a addObject:mk(@"Centre: Settings", @"Hotkey, links, search prefixes, app folders", @"Centre", @"slider.horizontal.3", ^{ [ws openSettings]; })];
     [a addObject:mk(@"Centre: Rescan Apps", nil, @"Centre", @"arrow.triangle.2.circlepath", ^{ [ws scanApps]; })];
-    [a addObject:mk(@"Centre: Rebuild", @"Recompile from Sources and relaunch (no Terminal needed)", @"Centre", @"hammer", ^{ [ws rebuild]; })];
+    if ([ws isDevelopmentCopy]) [a addObject:mk(@"Centre: Rebuild", @"Recompile this development copy and relaunch", @"Centre", @"hammer", ^{ [ws rebuild]; })];
     [a addObject:mk(@"Centre: Toggle Start at Login", nil, @"Centre", @"sunrise", ^{ [ws toggleLoginItem]; })];
     [a addObject:mk(@"Centre: Grant Accessibility", @"Needed for window commands and auto-paste", @"Centre", @"hand.raised", ^{ [ws grantAX]; })];
     [a addObject:mk(@"Centre: Quit", nil, @"Centre", @"xmark", ^{ [NSApp terminate:nil]; })];

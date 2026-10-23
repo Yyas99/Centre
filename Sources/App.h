@@ -119,7 +119,6 @@
 - (void)unregisterHotKey;
 - (void)updateStatusItem;
 - (void)updateStatusMenu;
-- (void)openConfigFile;
 - (void)openSettings;
 - (void)openSettingsPage:(NSString *)name;
 - (void)writeConfig:(NSDictionary *)c;
@@ -130,6 +129,8 @@
 - (void)toggleLoginItem;
 - (BOOL)launchesAtLogin;
 - (NSString *)sourceDir;
+- (BOOL)isDevelopmentCopy;
+- (void)uninstall;
 - (BOOL)sourceIsNewer;
 - (NSDate *)sourceDate;
 - (void)rebuild;
@@ -166,7 +167,6 @@
 
 @interface CApp (Home)
 - (NSArray<CItem *> *)mostUsedApps;
-- (NSArray<CItem *> *)quickActions;
 - (NSArray<CItem *> *)recentCommands:(NSInteger)limit exclude:(NSSet *)skip;
 - (void)startRecentFilesQuery;
 - (void)buildHome;

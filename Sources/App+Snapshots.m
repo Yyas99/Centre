@@ -182,7 +182,7 @@
     self.hasNow = NO;
     CSettings *st = [[CSettings alloc] initWithApp:self]; [st useSampleData];
     st.window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
-    for (NSArray *pg in @[@[@"Taskbar", @"dark-44-set-taskbar"], @[@"Home", @"dark-40-set-home"], @[@"Commands", @"dark-41-set-commands"], @[@"Snippets", @"dark-42-set-snippets"], @[@"Shortcuts", @"dark-43-set-shortcuts"]]) {
+    for (NSArray *pg in @[@[@"Taskbar", @"dark-44-set-taskbar"], @[@"Home", @"dark-40-set-home"], @[@"Commands", @"dark-41-set-commands"], @[@"Snippets", @"dark-42-set-snippets"], @[@"Shortcuts", @"dark-43-set-shortcuts"], @[@"Search", @"dark-45-set-search"], @[@"System", @"dark-46-set-system"], @[@"General", @"dark-47-set-general"]]) {
         [st showPageNamed:pg[0]];
         [self snapshotView:st.window.contentView name:pg[1] radius:0];
     }
