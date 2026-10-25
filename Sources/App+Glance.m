@@ -130,6 +130,127 @@ static void axSetRect(id win, CGRect r) {
 }
 @end
 
+#pragma mark - Floating shelf
+
+// One item on the floating shelf: drag it out to wherever it goes (it leaves the shelf once it lands),
+// double-click to open it, right-click for more.
+@interface CShelfTile : NSView <NSDraggingSource>
+@property (nonatomic, copy) NSDictionary *entry;
+@property (nonatomic, weak) CApp *app;
+@property (nonatomic) BOOL hover;
+@property (nonatomic, strong) NSImage *icon;
+@property (nonatomic, strong) NSEvent *downEvent;
+@end
+@implementation CShelfTile
+- (BOOL)isFlipped { return YES; }
+- (BOOL)mouseDownCanMoveWindow { return NO; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)e { return YES; }
+- (NSString *)name {
+    NSString *v = self.entry[@"value"];
+    if ([self.entry[@"type"] isEqual:@"file"]) return v.lastPathComponent;
+    if ([self.entry[@"type"] isEqual:@"url"]) { NSString *h = [NSURL URLWithString:v].host; return [h hasPrefix:@"www."] ? [h substringFromIndex:4] : (h ?: v); }
+    return [[v stringByReplacingOccurrencesOfString:@"\n" withString:@" "] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
+}
+- (NSImage *)iconImage {
+    if (self.icon) return self.icon;
+    NSString *v = self.entry[@"value"];
+    if ([self.entry[@"type"] isEqual:@"file"]) { self.icon = [[NSWorkspace sharedWorkspace] iconForFile:v]; self.icon.size = NSMakeSize(64, 64); }
+    else {
+        NSImage *g = tintedSymbol([self.entry[@"type"] isEqual:@"url"] ? @"link" : @"text.quote", 17, [NSColor colorWithWhite:1 alpha:0.85]);
+        self.icon = [NSImage imageWithSize:NSMakeSize(40, 40) flipped:NO drawingHandler:^BOOL(NSRect r) {
+            NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(r, 3, 3) xRadius:9 yRadius:9];
+            [[NSColor colorWithWhite:1 alpha:0.08] setFill]; [p fill];
+            [[NSColor colorWithWhite:1 alpha:0.12] setStroke]; [p stroke];
+            [g drawInRect:NSMakeRect(NSMidX(r) - g.size.width / 2, NSMidY(r) - g.size.height / 2, g.size.width, g.size.height)];
+            return YES; }];
+    }
+    return self.icon;
+}
+- (void)drawRect:(NSRect)dirty {
+    NSRect b = self.bounds;
+    if (self.hover) { [[NSColor colorWithWhite:1 alpha:0.07] setFill]; [[NSBezierPath bezierPathWithRoundedRect:b xRadius:10 yRadius:10] fill]; }
+    [[self iconImage] drawInRect:NSMakeRect(NSMidX(b) - 20, 6, 40, 40) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    NSMutableParagraphStyle *ps = [NSMutableParagraphStyle new]; ps.alignment = NSTextAlignmentCenter; ps.lineBreakMode = NSLineBreakByTruncatingMiddle;
+    [[self name] drawInRect:NSMakeRect(3, 50, b.size.width - 6, 14) withAttributes:@{NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightMedium],
+                                                                                     NSForegroundColorAttributeName: [NSColor colorWithWhite:1 alpha:0.72], NSParagraphStyleAttributeName: ps}];
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *t in self.trackingAreas) [self removeTrackingArea:t];
+    [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect options:NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect owner:self userInfo:nil]];
+}
+- (void)mouseEntered:(NSEvent *)e { self.hover = YES; [self setNeedsDisplay:YES]; }
+- (void)mouseExited:(NSEvent *)e { self.hover = NO; [self setNeedsDisplay:YES]; }
+- (void)mouseDown:(NSEvent *)e { self.downEvent = e; if (e.clickCount == 2) [self openEntry]; }
+- (void)mouseDragged:(NSEvent *)e {
+    if (!self.downEvent) return;
+    NSPoint a = self.downEvent.locationInWindow, b = e.locationInWindow;
+    if (hypot(a.x - b.x, a.y - b.y) < 4) return;
+    NSString *v = self.entry[@"value"]; id<NSPasteboardWriting> w = v;
+    if ([self.entry[@"type"] isEqual:@"file"]) w = [NSURL fileURLWithPath:v];
+    else if ([self.entry[@"type"] isEqual:@"url"] && [NSURL URLWithString:v]) w = [NSURL URLWithString:v];
+    NSDraggingItem *di = [[NSDraggingItem alloc] initWithPasteboardWriter:w];
+    [di setDraggingFrame:NSMakeRect(NSMidX(self.bounds) - 20, 6, 40, 40) contents:[self iconImage]];
+    [self beginDraggingSessionWithItems:@[di] event:self.downEvent source:self];
+    self.downEvent = nil;
+}
+- (NSDragOperation)draggingSession:(NSDraggingSession *)s sourceOperationMaskForDraggingContext:(NSDraggingContext)c {
+    return c == NSDraggingContextWithinApplication ? NSDragOperationNone : NSDragOperationCopy | NSDragOperationGeneric | NSDragOperationLink;
+}
+- (void)draggingSession:(NSDraggingSession *)s endedAtPoint:(NSPoint)p operation:(NSDragOperation)op {
+    if (op != NSDragOperationNone) [self.app shelfRemove:self.entry[@"id"]];   // it went somewhere: off the shelf
+}
+- (void)openEntry {
+    NSString *v = self.entry[@"value"];
+    if ([self.entry[@"type"] isEqual:@"file"]) [[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:v]];
+    else if ([self.entry[@"type"] isEqual:@"url"]) openURLString(v);
+    else { copyText(v); showHUD(@"Copied", @"doc.on.clipboard.fill"); }
+}
+- (NSMenu *)menuForEvent:(NSEvent *)e {
+    NSMenu *m = [NSMenu new];
+    BOOL file = [self.entry[@"type"] isEqual:@"file"];
+    [m addItemWithTitle:file ? @"Open" : [self.entry[@"type"] isEqual:@"url"] ? @"Open Link" : @"Copy" action:@selector(openEntry) keyEquivalent:@""].target = self;
+    if (file) [m addItemWithTitle:@"Show in Finder" action:@selector(reveal) keyEquivalent:@""].target = self;
+    if (!file) [m addItemWithTitle:@"Copy" action:@selector(copyEntry) keyEquivalent:@""].target = self;
+    [m addItem:[NSMenuItem separatorItem]];
+    [m addItemWithTitle:@"Remove from Shelf" action:@selector(remove) keyEquivalent:@""].target = self;
+    [m addItemWithTitle:@"Clear Shelf" action:@selector(clearAll) keyEquivalent:@""].target = self;
+    return m;
+}
+- (void)reveal { [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[[NSURL fileURLWithPath:self.entry[@"value"]]]]; }
+- (void)copyEntry { copyText(self.entry[@"value"]); showHUD(@"Copied", @"doc.on.clipboard.fill"); }
+- (void)remove { [self.app shelfRemove:self.entry[@"id"]]; }
+- (void)clearAll { [self.app clearShelf]; }
+@end
+
+// The floating shelf itself: a small glass card that stays on screen while the shelf holds anything.
+// Drag it by its background; drop more onto it.
+@interface CShelfFloat : NSView
+@property (nonatomic, weak) CApp *app;
+@property (nonatomic) BOOL hot;
+@end
+@implementation CShelfFloat
+- (instancetype)initWithFrame:(NSRect)f {
+    if ((self = [super initWithFrame:f]))
+        [self registerForDraggedTypes:@[NSPasteboardTypeFileURL, NSPasteboardTypeURL, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPasteboardTypePNG]];
+    return self;
+}
+- (BOOL)isFlipped { return YES; }
+- (BOOL)mouseDownCanMoveWindow { return YES; }
+- (void)drawRect:(NSRect)r {
+    if (self.hot) {
+        NSBezierPath *p = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 3, 3) xRadius:13 yRadius:13];
+        [[cAccent() colorWithAlphaComponent:0.10] setFill]; [p fill]; p.lineWidth = 1.5; [[cAccent() colorWithAlphaComponent:0.7] setStroke]; [p stroke];
+    }
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)s {
+    if ([s.draggingSource isKindOfClass:[CShelfTile class]]) return NSDragOperationNone;
+    self.hot = YES; [self setNeedsDisplay:YES]; return NSDragOperationCopy;
+}
+- (void)draggingExited:(id<NSDraggingInfo>)s { self.hot = NO; [self setNeedsDisplay:YES]; }
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)s { self.hot = NO; [self setNeedsDisplay:YES]; return [self.app addToShelfFrom:s.draggingPasteboard] != nil; }
+@end
+
 @implementation CApp (Glance)
 
 #pragma mark - Timed suggestions
@@ -315,7 +436,64 @@ static void axSetRect(id win, CGRect r) {
 - (void)saveShelf {
     NSData *d = [NSJSONSerialization dataWithJSONObject:self.shelf ?: @[] options:0 error:nil];
     [d writeToFile:[self shelfPath] atomically:YES];
+    [self updateShelfFloat];
 }
+- (void)clearShelf { [self.shelf removeAllObjects]; [self saveShelf]; showHUD(@"Shelf cleared", @"tray"); }
+
+// Shown whenever the shelf holds something (Settings › General › Shelf on screen), so files can be dragged
+// straight out without opening Centre. Up to six tiles; the rest are in Centre (type "shelf").
+- (void)updateShelfFloat {
+    if (self.snapshotDir) return;
+    BOOL want = self.shelf.count > 0 && ![self.config[@"shelfFloating"] isEqual:@NO];
+    if (!want) { [self.shelfFloat orderOut:nil]; return; }
+    const CGFloat tw = 64, th = 68, pad = 10, head = 26;
+    NSUInteger shown = MIN(self.shelf.count, (NSUInteger)6), extra = self.shelf.count - shown;
+    CGFloat w = MAX(pad * 2 + shown * tw + (extra ? 36 : 0), 168), h = head + th + pad;
+    NSScreen *scr = NSScreen.mainScreen; NSRect v = scr.visibleFrame;
+    NSPoint origin = NSMakePoint(NSMaxX(v) - w - 18, NSMaxY(v) - h - 18);
+    if (self.shelfFloat.visible) origin = NSMakePoint(NSMaxX(self.shelfFloat.frame) - w, NSMaxY(self.shelfFloat.frame) - h);   // grow to the left, keep the top
+    else if ([self.config[@"shelfOrigin"] isKindOfClass:[NSString class]]) { NSPoint p = NSPointFromString(self.config[@"shelfOrigin"]); origin = NSMakePoint(p.x - w, p.y - h); }
+    NSRect fr = NSMakeRect(round(origin.x), round(origin.y), w, h);
+    NSRect bounds = NSZeroRect; for (NSScreen *s in NSScreen.screens) bounds = NSUnionRect(bounds, s.visibleFrame);
+    if (!NSContainsRect(bounds, fr)) fr.origin = NSMakePoint(NSMaxX(v) - w - 18, NSMaxY(v) - h - 18);       // a display went away
+    if (!self.shelfFloat) {
+        NSPanel *p = glassPanel(fr, 16);
+        p.level = NSFloatingWindowLevel; p.movableByWindowBackground = YES;
+        p.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorIgnoresCycle;   // not over full-screen apps
+        __weak CApp *ws = self;
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidMoveNotification object:p queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *n) {
+            NSRect f = ws.shelfFloat.frame;                       // remembered by its top-right corner, since it grows leftwards
+            NSMutableDictionary *c = [ws mutableConfig]; c[@"shelfOrigin"] = NSStringFromPoint(NSMakePoint(NSMaxX(f), NSMaxY(f)));
+            NSData *d = [NSJSONSerialization dataWithJSONObject:c options:NSJSONWritingPrettyPrinted | NSJSONWritingSortedKeys error:nil];
+            [d writeToFile:ws.configPath atomically:YES];         // quietly: no need to re-apply every setting for a move
+        }];
+        self.shelfFloat = p;
+    }
+    [self.shelfFloat setFrame:fr display:NO];
+    NSView *c = self.shelfFloat.contentView;
+    for (NSView *sv in [c.subviews copy]) if (![sv.identifier isEqualToString:@"tint"]) [sv removeFromSuperview];
+    CShelfFloat *f = [[CShelfFloat alloc] initWithFrame:c.bounds]; f.app = self; f.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [c addSubview:f];
+    NSTextField *t = [NSTextField labelWithAttributedString:sectionTitle(self.shelf.count == 1 ? @"Shelf" : [NSString stringWithFormat:@"Shelf · %lu", (unsigned long)self.shelf.count])];
+    t.frame = NSMakeRect(pad + 4, 8, 120, 14); [f addSubview:t];
+    NSButton *x = [NSButton buttonWithImage:tintedSymbol(@"xmark", 9, [NSColor colorWithWhite:1 alpha:0.45]) target:self action:@selector(clearShelf)];
+    x.bordered = NO; x.frame = NSMakeRect(w - pad - 18, 5, 18, 18); x.toolTip = @"Clear Shelf"; x.accessibilityLabel = @"Clear Shelf";
+    [f addSubview:x];
+    for (NSUInteger i = 0; i < shown; i++) {
+        CShelfTile *tile = [[CShelfTile alloc] initWithFrame:NSMakeRect(pad + i * tw, head, tw, th)];
+        tile.entry = self.shelf[i]; tile.app = self; tile.toolTip = [self.shelf[i][@"value"] description];
+        [f addSubview:tile];
+    }
+    if (extra) {
+        NSButton *more = [NSButton buttonWithTitle:[NSString stringWithFormat:@"+%lu", (unsigned long)extra] target:self action:@selector(showShelfInCentre)];
+        more.bordered = NO; more.font = [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold]; more.contentTintColor = [NSColor colorWithWhite:1 alpha:0.6];
+        more.frame = NSMakeRect(pad + shown * tw, head + 18, 32, 24); more.toolTip = @"Show the whole shelf in Centre";
+        [f addSubview:more];
+    }
+    if (!self.shelfFloat.visible) { self.shelfFloat.alphaValue = 0; [self.shelfFloat orderFrontRegardless];
+        [NSAnimationContext runAnimationGroup:^(NSAnimationContext *ctx) { ctx.duration = 0.18; self.shelfFloat.animator.alphaValue = 1; } completionHandler:nil]; }
+}
+- (void)showShelfInCentre { [self show]; self.field.stringValue = @"shelf"; [self refresh]; }
 - (BOOL)shelfHas:(NSString *)type value:(NSString *)v {
     for (NSDictionary *e in self.shelf) if ([e[@"type"] isEqual:type] && [e[@"value"] isEqual:v]) return YES;
     return NO;
@@ -583,7 +761,7 @@ static void axSetRect(id win, CGRect r) {
         for (CItem *i in items) { i.score = 60 - k++; [r addObject:i]; }
         if (items.count) {
             CItem *clear = mk(@"Clear Shelf", [NSString stringWithFormat:@"Removes %lu item%@", (unsigned long)items.count, items.count == 1 ? @"" : @"s"], @"Shelf", @"tray", ^{
-                [ws.shelf removeAllObjects]; [ws saveShelf]; showHUD(@"Shelf cleared", @"tray"); });
+                [ws clearShelf]; });
             clear.score = 59 - k; [r addObject:clear];
         } else {
             CItem *empty = mk(@"Your shelf is empty", @"Drag anything and drop it on the zone that appears at the top", @"Shelf", @"tray", nil);

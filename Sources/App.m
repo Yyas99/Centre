@@ -55,6 +55,7 @@
         [self registerCommandHotKeys];
         [self updateStatusItem];
         [self.taskbar apply];
+        if (self.shelf) [self updateShelfFloat];
     }
 }
 
@@ -559,7 +560,7 @@ static OSStatus hotKeyHandler(EventHandlerCallRef next, EventRef evt, void *ud) 
     self.taskbar = [[CTaskbar alloc] initWithApp:self];
     [self.taskbar apply];
     [self startRecentFilesQuery];
-    [self loadShelf]; [self startShelfWatch]; [self startPreviewWatch];
+    [self loadShelf]; [self updateShelfFloat]; [self startShelfWatch]; [self startPreviewWatch];
     [NSTimer scheduledTimerWithTimeInterval:0.6 target:self selector:@selector(pollClipboard) userInfo:nil repeats:YES];
     // Auto-rebuild: when anything in Sources/ changes, recompile and relaunch (only while the panel is hidden).
     [NSTimer scheduledTimerWithTimeInterval:4 repeats:YES block:^(NSTimer *t) {

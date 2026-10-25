@@ -1,6 +1,2 @@
-The first packaged release.
-
-- Install from the DMG: drag Centre into Applications.
-- Centre now checks for updates itself (Settings › General › Updates) and installs them in place, keeping your permissions.
-- Settings simplified to eight pages, with a new menu bar icon.
-- Uninstall from Settings › System.
+- The shelf stays on screen while it holds something: drag files, links and text straight out of it, without opening Centre.
+- Drop more onto it, double-click to open, right-click to remove or clear. Turn it off in Settings › General.

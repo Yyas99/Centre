@@ -540,7 +540,8 @@ static NSArray *searchEngines(void) {
                             setRow(@"Status line", @"Time, next event, battery and network.", [self switchFor:@"ambientLine" fallback:YES]),
                             setRow(@"Glance", @"Hold the shortcut to peek; let go to dismiss.", [self switchFor:@"holdToPeek" fallback:YES]),
                             setRow(@"Calendar in the glance", nil, [self switchFor:@"peekCalendar" fallback:YES]),
-                            setRow(@"Shelf", @"Drop anything at the top of the screen while dragging.", [self switchFor:@"shelfDropZone" fallback:YES])])];
+                            setRow(@"Shelf", @"Drop anything at the top of the screen while dragging.", [self switchFor:@"shelfDropZone" fallback:YES]),
+                            setRow(@"Shelf on screen", @"Stays up while it holds something; drag items straight out.", [self switchFor:@"shelfFloating" fallback:YES])])];
     [self gap];
 
     // Updates: the installed copy checks GitHub Releases; the development copy updates from its source.

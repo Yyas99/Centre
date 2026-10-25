@@ -81,7 +81,7 @@
 @property (nonatomic, copy) NSString *hotKeyArmedKey;                 // irreversible command waiting for its shortcut again
 @property (nonatomic, strong) NSDate *hotKeyArmedAt;
 // Glance features (App+Glance.m)
-@property (nonatomic, strong) NSPanel *peekPanel, *dropZone, *previewPanel;
+@property (nonatomic, strong) NSPanel *peekPanel, *dropZone, *previewPanel, *shelfFloat;
 @property (nonatomic, strong) NSTimer *peekWatch, *previewTimer, *holdTimer;
 @property (nonatomic) BOOL hotKeyHeld, peekShowing;
 @property (nonatomic, strong) id calendarStore;
@@ -281,6 +281,9 @@
 - (void)showPeek;
 - (void)hidePeek;
 - (void)loadShelf;
+- (void)clearShelf;
+- (void)updateShelfFloat;
+- (void)showShelfInCentre;
 - (void)startShelfWatch;
 - (NSArray<CItem *> *)shelfItems;
 - (void)shelfRemove:(NSString *)sid;
